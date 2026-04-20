@@ -76,7 +76,6 @@ function parseSignText(text) {
 }
 
 // ─── GEOCODING PROXY ──────────────────────────────────────────────────────────
-// Proxies NYC Planning Labs geocoder — avoids CORS issues from browser
 app.get("/api/geocode", async (req, res) => {
   const { q } = req.query;
   if (!q) return res.status(400).json({ error: "q required" });
@@ -84,51 +83,104 @@ app.get("/api/geocode", async (req, res) => {
   const withCity = /new york|nyc|brooklyn|manhattan|bronx|queens|staten island/i.test(q)
     ? q : `${q}, New York City`;
 
+  // Try Nominatim (OpenStreetMap) first — reliable, free, no key needed
   try {
-    const url = `https://geosearch.planninglabs.nyc/v2/search?text=${encodeURIComponent(withCity)}&size=1&layers=address,street,venue,neighbourhood`;
-    const r = await fetch(url);
-    if (!r.ok) return res.status(502).json({ error: "Geocoder unavailable" });
-    const data = await r.json();
-    if (!data.features?.length) return res.status(404).json({ error: `Could not find "${q}" in NYC` });
-
-    const p = data.features[0].properties;
-    const [lng, lat] = data.features[0].geometry.coordinates;
-    res.json({
-      street: p.street || p.name || q.toUpperCase(),
-      borough: p.borough || p.county || "",
-      neighborhood: p.neighbourhood || p.locality || "",
-      label: p.label || q,
-      lat, lng,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(withCity)}&format=json&limit=1&addressdetails=1&countrycodes=us`;
+    const r = await fetch(url, { headers: { "User-Agent": "StreetParkInfo/1.0" } });
+    if (r.ok) {
+      const data = await r.json();
+      if (data.length > 0) {
+        const item = data[0];
+        const addr = item.address || {};
+        const street = addr.road || addr.pedestrian || addr.footway || q.toUpperCase();
+        const borough = addr.borough || addr.city_district || addr.suburb || addr.county || "";
+        const neighborhood = addr.neighbourhood || addr.suburb || "";
+        return res.json({
+          street: street.toUpperCase(),
+          borough,
+          neighborhood,
+          label: item.display_name?.split(",").slice(0, 2).join(",") || q,
+          lat: parseFloat(item.lat),
+          lng: parseFloat(item.lon),
+        });
+      }
+    }
+  } catch (e) {
+    console.error("Nominatim error:", e.message);
   }
+
+  // Fallback: NYC Planning Labs GeoSearch
+  try {
+    const url = `https://geosearch.planninglabs.nyc/v2/search?text=${encodeURIComponent(withCity)}&size=1`;
+    const r = await fetch(url);
+    if (r.ok) {
+      const data = await r.json();
+      if (data.features?.length) {
+        const p = data.features[0].properties;
+        const [lng, lat] = data.features[0].geometry.coordinates;
+        return res.json({
+          street: (p.street || p.name || q).toUpperCase(),
+          borough: p.borough || p.county || "",
+          neighborhood: p.neighbourhood || p.locality || "",
+          label: p.label || q,
+          lat, lng,
+        });
+      }
+    }
+  } catch (e) {
+    console.error("GeoSearch error:", e.message);
+  }
+
+  res.status(404).json({ error: `Could not find "${q}" in NYC. Try a street name like "Broadway" or an address.` });
 });
 
-// Reverse geocode — lat/lng to street name
+// Reverse geocode proxy
 app.get("/api/reverse-geocode", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.status(400).json({ error: "lat and lng required" });
 
   try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`;
+    const r = await fetch(url, { headers: { "User-Agent": "StreetParkInfo/1.0" } });
+    if (r.ok) {
+      const item = await r.json();
+      const addr = item.address || {};
+      return res.json({
+        street: (addr.road || addr.pedestrian || addr.footway || "").toUpperCase(),
+        borough: addr.borough || addr.city_district || addr.suburb || "",
+        neighborhood: addr.neighbourhood || addr.suburb || "",
+        label: item.display_name?.split(",").slice(0, 2).join(",") || "",
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+      });
+    }
+  } catch (e) {
+    console.error("Reverse geocode error:", e.message);
+  }
+
+  // Fallback to Planning Labs
+  try {
     const url = `https://geosearch.planninglabs.nyc/v2/reverse?point.lat=${lat}&point.lon=${lng}&size=1`;
     const r = await fetch(url);
-    if (!r.ok) return res.status(502).json({ error: "Geocoder unavailable" });
-    const data = await r.json();
-    if (!data.features?.length) return res.status(404).json({ error: "Could not identify street" });
-
-    const p = data.features[0].properties;
-    res.json({
-      street: p.street || p.name || "",
-      borough: p.borough || "",
-      neighborhood: p.neighbourhood || p.locality || "",
-      label: p.label || "",
-      lat: parseFloat(lat),
-      lng: parseFloat(lng),
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (r.ok) {
+      const data = await r.json();
+      if (data.features?.length) {
+        const p = data.features[0].properties;
+        return res.json({
+          street: (p.street || p.name || "").toUpperCase(),
+          borough: p.borough || "",
+          neighborhood: p.neighbourhood || p.locality || "",
+          label: p.label || "",
+          lat: parseFloat(lat),
+          lng: parseFloat(lng),
+        });
+      }
+    }
+  } catch (e) {
+    console.error("GeoSearch reverse error:", e.message);
   }
+
+  res.status(502).json({ error: "Could not identify your street" });
 });
 
 

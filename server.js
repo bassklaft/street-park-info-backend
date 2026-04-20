@@ -199,7 +199,7 @@ app.get("/api/cleaning", async (req, res) => {
 
   try {
     // Hit DOT parking signs dataset — signdesc is the correct field name
-    const url = `${SOCRATA}/xswq-wnv9.json?$where=upper(street)%20LIKE%20'%25${encoded}%25'%20AND%20(upper(signdesc)%20LIKE%20'%25STREET%20CLEANING%25'%20OR%20upper(signdesc)%20LIKE%20'%25NO%20PARKING%25')&$limit=50&$order=street%20ASC`;
+    const url = `${SOCRATA}/xswq-wnv9.json?$where=upper(street)%20LIKE%20'%25${encoded}%25'&$limit=100&$order=street%20ASC`;
     const r = await fetch(url, { headers: nycHeaders });
 
     if (!r.ok) {
@@ -212,13 +212,18 @@ app.get("/api/cleaning", async (req, res) => {
     // Map to a clean shape the frontend can use directly
     const results = raw
       .map(row => {
-        const parsed = parseSignText(row.signdesc || row.description || "");
+        // DOT dataset uses signdesc, some rows use description
+        const text = row.signdesc || row.description || row.sign_text || "";
+        const upper = text.toUpperCase();
+        // Only keep street cleaning / no parking rules
+        if (!upper.includes("STREET CLEANING") && !upper.includes("NO PARKING")) return null;
+        const parsed = parseSignText(text);
         if (!parsed || parsed.days.length === 0) return null;
         return {
           street: row.street || name,
           side: row.side_of_street || row.sos || "",
-          fromHouse: row.fromhousenumber || "",
-          toHouse: row.tohousenumber || "",
+          fromHouse: row.fromhousenumber || row.from_hn || "",
+          toHouse: row.tohousenumber || row.to_hn || "",
           days: parsed.days,
           time: parsed.time,
           raw: parsed.raw,

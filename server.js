@@ -1,7 +1,7 @@
 /**
  * Street Park Info — Backend Server
  * Express + Stripe + Twilio + node-cron + PostgreSQL
- * Deploy to Render.com (free tier)
+ * NYC Open Data proxy (fixes 403 CORS issue from browser)
  */
 
 require("dotenv").config();
@@ -17,109 +17,253 @@ const PORT = process.env.PORT || 3001;
 
 // ─── CLIENTS ─────────────────────────────────────────────────────────────────
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const db = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 // ─── MIDDLEWARE ───────────────────────────────────────────────────────────────
-app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
-// Raw body needed for Stripe webhook signature verification
+app.use(cors({ origin: "*" })); // allow all origins — frontend is on Vercel
 app.use("/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
-// ─── DB INIT ─────────────────────────────────────────────────────────────────
-async function initDB() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS subscribers (
-      id SERIAL PRIMARY KEY,
-      phone TEXT NOT NULL,
-      street TEXT NOT NULL,
-      borough TEXT DEFAULT '',
-      lat DOUBLE PRECISION,
-      lng DOUBLE PRECISION,
-      stripe_customer_id TEXT,
-      stripe_subscription_id TEXT,
-      plan TEXT DEFAULT 'trial',         -- trial | monthly | annual
-      trial_ends_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 days',
-      active BOOLEAN DEFAULT TRUE,
-      addresses TEXT[] DEFAULT ARRAY[]::TEXT[],
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
+// ─── NYC OPEN DATA CONFIG ─────────────────────────────────────────────────────
+const SOCRATA = "https://data.cityofnewyork.us/resource";
+// App token avoids rate limits — register free at data.cityofnewyork.us/profile
+// Works without token but slower — add NYC_APP_TOKEN to Render env vars when ready
+const NYC_TOKEN = process.env.NYC_APP_TOKEN || "";
+const nycHeaders = NYC_TOKEN ? { "X-App-Token": NYC_TOKEN } : {};
 
-    CREATE TABLE IF NOT EXISTS alert_log (
-      id SERIAL PRIMARY KEY,
-      subscriber_id INTEGER REFERENCES subscribers(id),
-      message TEXT,
-      sent_at TIMESTAMPTZ DEFAULT NOW(),
-      type TEXT  -- cleaning | film | weather | event
-    );
-  `);
-  console.log("✅ DB ready");
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+// Normalize any street name input to match DOT dataset format
+// "broadway" → "BROADWAY", "w 72nd st" → "WEST 72 STREET", etc.
+function normalizeStreet(raw) {
+  return raw
+    .trim()
+    .toUpperCase()
+    .replace(/\bW\.?\s+/g, "WEST ")
+    .replace(/\bE\.?\s+/g, "EAST ")
+    .replace(/\bN\.?\s+/g, "NORTH ")
+    .replace(/\bS\.?\s+/g, "SOUTH ")
+    .replace(/\bST\.?$/,  "STREET")
+    .replace(/\bAVE?\.?$/, "AVENUE")
+    .replace(/\bBLVD\.?$/, "BOULEVARD")
+    .replace(/\bDR\.?$/,  "DRIVE")
+    .replace(/\bPL\.?$/,  "PLACE")
+    .replace(/\bRD\.?$/,  "ROAD")
+    .replace(/(\d+)(ST|ND|RD|TH)\b/i, "$1") // "72ND" → "72"
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-// ─── HEALTH (keeps Render free tier awake via UptimeRobot) ───────────────────
+// Parse a DOT sign description into structured day/time data
+// Handles formats like "NO PARKING 8AM-10AM MON THRU FRI"
+function parseSignText(text) {
+  if (!text) return null;
+  const upper = text.toUpperCase();
+  if (!upper.includes("STREET CLEANING") && !upper.includes("NO PARKING")) return null;
+
+  const dayMap = { MON: "Mon", TUE: "Tue", WED: "Wed", THU: "Thu", FRI: "Fri", SAT: "Sat", SUN: "Sun" };
+  const days = Object.entries(dayMap)
+    .filter(([abbr]) => new RegExp(`\\b${abbr}`, "i").test(text))
+    .map(([, label]) => label);
+
+  const timeMatch = text.match(
+    /(\d{1,2}(?::\d{2})?\s*(?:AM|PM)?)\s*(?:[-–]|TO|THRU)\s*(\d{1,2}(?::\d{2})?\s*(?:AM|PM)?)/i
+  );
+  const time = timeMatch ? `${timeMatch[1].trim()} – ${timeMatch[2].trim()}` : null;
+
+  return { days, time, raw: text };
+}
+
+// ─── HEALTH ───────────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
+// ─── NYC DATA PROXY ENDPOINTS ─────────────────────────────────────────────────
+// These run server-side so there's no 403 CORS issue from the browser
+
+// Street cleaning schedule — searches DOT parking signs for a street name
+app.get("/api/cleaning", async (req, res) => {
+  const { street } = req.query;
+  if (!street) return res.json([]);
+
+  const name = normalizeStreet(street);
+  const encoded = encodeURIComponent(name);
+
+  try {
+    // Hit DOT parking signs dataset — signdesc is the correct field name
+    const url = `${SOCRATA}/xswq-wnv9.json?$where=upper(street)%20LIKE%20'%25${encoded}%25'%20AND%20(upper(signdesc)%20LIKE%20'%25STREET%20CLEANING%25'%20OR%20upper(signdesc)%20LIKE%20'%25NO%20PARKING%25')&$limit=50&$order=street%20ASC`;
+    const r = await fetch(url, { headers: nycHeaders });
+
+    if (!r.ok) {
+      console.error("DOT API error:", r.status, await r.text());
+      return res.json([]);
+    }
+
+    const raw = await r.json();
+
+    // Map to a clean shape the frontend can use directly
+    const results = raw
+      .map(row => {
+        const parsed = parseSignText(row.signdesc || row.description || "");
+        if (!parsed || parsed.days.length === 0) return null;
+        return {
+          street: row.street || name,
+          side: row.side_of_street || row.sos || "",
+          fromHouse: row.fromhousenumber || "",
+          toHouse: row.tohousenumber || "",
+          days: parsed.days,
+          time: parsed.time,
+          raw: parsed.raw,
+        };
+      })
+      .filter(Boolean);
+
+    // Deduplicate — same days+time on same block often appears multiple times
+    const seen = new Set();
+    const deduped = results.filter(r => {
+      const key = `${r.days.join(",")}-${r.time}-${r.side}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    res.json(deduped);
+  } catch (err) {
+    console.error("Cleaning fetch error:", err.message);
+    res.json([]);
+  }
+});
+
+// Film permits — searches parking held field for a street name, upcoming dates
+app.get("/api/films", async (req, res) => {
+  const { street } = req.query;
+  if (!street) return res.json([]);
+
+  const name = normalizeStreet(street);
+  const encoded = encodeURIComponent(name);
+
+  const from = new Date(); from.setDate(from.getDate() - 1);
+  const to = new Date(); to.setDate(to.getDate() + 7);
+  const fmt = d => d.toISOString().replace("T", "T").split(".")[0];
+
+  try {
+    const url = `${SOCRATA}/tg4x-b46p.json?$where=upper(parkingheld)%20LIKE%20'%25${encoded}%25'%20AND%20startdatetime%20>=%20'${fmt(from)}'%20AND%20startdatetime%20<=%20'${fmt(to)}'&$limit=20&$order=startdatetime%20ASC`;
+    const r = await fetch(url, { headers: nycHeaders });
+    if (!r.ok) return res.json([]);
+    const data = await r.json();
+    res.json(data.map(f => ({
+      id: f.eventid,
+      type: f.category || "Film",
+      subtype: f.subcategoryname || f.eventtype || "Shoot",
+      start: f.startdatetime,
+      end: f.enddatetime,
+      parkingHeld: f.parkingheld || "",
+      borough: f.borough || "",
+    })));
+  } catch (err) {
+    console.error("Films fetch error:", err.message);
+    res.json([]);
+  }
+});
+
+// Public events — returns upcoming permitted events, optionally filtered by borough
+app.get("/api/events", async (req, res) => {
+  const { borough } = req.query;
+  const today = new Date().toISOString().split("T")[0];
+  const toDate = new Date(); toDate.setDate(toDate.getDate() + 14);
+  const toStr = toDate.toISOString().split("T")[0];
+
+  try {
+    const boroughFilter = borough
+      ? `%20AND%20upper(borough)%20LIKE%20'%25${encodeURIComponent(borough.toUpperCase())}%25'`
+      : "";
+    const url = `${SOCRATA}/tvpp-9vvx.json?$where=startdate%20>=%20'${today}'%20AND%20startdate%20<=%20'${toStr}'${boroughFilter}&$limit=15&$order=startdate%20ASC`;
+    const r = await fetch(url, { headers: nycHeaders });
+    if (!r.ok) return res.json([]);
+    const data = await r.json();
+    res.json(data.map(ev => ({
+      name: ev.eventname || ev.name || "City Event",
+      type: ev.eventtype || "Event",
+      start: ev.startdate,
+      location: ev.eventlocation || "",
+      borough: ev.borough || "",
+      parkingImpacted: !!(ev.parkingimpacted),
+    })));
+  } catch (err) {
+    console.error("Events fetch error:", err.message);
+    res.json([]);
+  }
+});
+
+// Weather — proxies Open-Meteo (already CORS-friendly but nice to have server-side)
+app.get("/api/weather", async (req, res) => {
+  const { lat, lng } = req.query;
+  if (!lat || !lng) return res.json(null);
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code,wind_speed_10m,precipitation&daily=weather_code,precipitation_sum,snowfall_sum&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&forecast_days=3&timezone=America%2FNew_York`;
+    const r = await fetch(url);
+    res.json(r.ok ? await r.json() : null);
+  } catch { res.json(null); }
+});
+
+// ASP suspension status for today
+app.get("/api/asp", async (req, res) => {
+  try {
+    const today = new Date().toLocaleDateString("en-CA");
+    const url = `https://api.nyc.gov/public/api/GetCalendar?calendarTypes=AltSideParking&startDate=${today}&endDate=${today}`;
+    const r = await fetch(url);
+    if (!r.ok) return res.json({ suspended: false });
+    const data = await r.json();
+    const suspended = JSON.stringify(data).toLowerCase().includes("suspended");
+    res.json({ suspended });
+  } catch { res.json({ suspended: false }); }
+});
+
 // ─── SUBSCRIBE ────────────────────────────────────────────────────────────────
-// Called when user enters their phone on the frontend
 app.post("/subscribe", async (req, res) => {
   const { phone, street, borough, lat, lng } = req.body;
   if (!phone || !street) return res.status(400).json({ error: "phone and street required" });
 
-  // Normalize phone to E.164
   const normalized = phone.replace(/\D/g, "");
   const e164 = normalized.startsWith("1") ? `+${normalized}` : `+1${normalized}`;
 
   try {
-    // Upsert subscriber (idempotent on phone number)
-    const result = await db.query(
+    await db.query(
       `INSERT INTO subscribers (phone, street, borough, lat, lng)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT DO NOTHING
-       RETURNING id`,
-      [e164, street.toUpperCase(), borough || "", lat || null, lng || null]
+       ON CONFLICT DO NOTHING`,
+      [e164, normalizeStreet(street), borough || "", lat || null, lng || null]
     );
 
-    // Send welcome SMS
     await twilioClient.messages.create({
-      body: `🚗 Street Park Info activated for ${street}! We'll text you before street cleaning, film shoots, and bad weather. Reply STOP to cancel.`,
+      body: `🚗 Street Park Info is on! We'll text you before street cleaning, film shoots, and bad weather on ${street}. Reply STOP to cancel.`,
       from: process.env.TWILIO_PHONE_NUMBER,
       to: e164,
     });
 
-    res.json({ ok: true, message: "Subscribed! Check your phone." });
+    res.json({ ok: true });
   } catch (err) {
     console.error("Subscribe error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── STRIPE: CREATE CHECKOUT SESSION ─────────────────────────────────────────
+// ─── STRIPE CHECKOUT ─────────────────────────────────────────────────────────
 app.post("/create-checkout-session", async (req, res) => {
-  const { plan, phone, street } = req.body; // plan: 'monthly' | 'annual'
-
-  const priceId =
-    plan === "annual"
-      ? process.env.STRIPE_PRICE_ANNUAL
-      : process.env.STRIPE_PRICE_MONTHLY;
-
+  const { plan, phone, street } = req.body;
+  const priceId = plan === "annual" ? process.env.STRIPE_PRICE_ANNUAL : process.env.STRIPE_PRICE_MONTHLY;
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "subscription",
       line_items: [{ price: priceId, quantity: 1 }],
       metadata: { phone, street },
-      success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}`,
-      subscription_data: {
-        trial_period_days: 30,
-      },
+      success_url: `${process.env.FRONTEND_URL}?subscribed=true`,
+      cancel_url: process.env.FRONTEND_URL,
+      subscription_data: { trial_period_days: 30 },
     });
     res.json({ url: session.url });
   } catch (err) {
-    console.error("Stripe error:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -133,190 +277,117 @@ app.post("/webhook", async (req, res) => {
   } catch (err) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
-
   if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    const { phone, street } = session.metadata;
+    const { phone, street } = event.data.object.metadata;
     await db.query(
-      `UPDATE subscribers
-       SET stripe_customer_id = $1,
-           stripe_subscription_id = $2,
-           plan = $3,
-           active = true
-       WHERE phone = $4`,
-      [
-        session.customer,
-        session.subscription,
-        session.amount_total < 500 ? "monthly" : "annual",
-        phone,
-      ]
-    );
+      `UPDATE subscribers SET stripe_customer_id=$1, stripe_subscription_id=$2, plan=$3, active=true WHERE phone=$4`,
+      [event.data.object.customer, event.data.object.subscription,
+       event.data.object.amount_total < 500 ? "monthly" : "annual", phone]
+    ).catch(console.error);
   }
-
   if (event.type === "customer.subscription.deleted") {
-    const sub = event.data.object;
-    await db.query(
-      "UPDATE subscribers SET active = false WHERE stripe_subscription_id = $1",
-      [sub.id]
-    );
+    await db.query("UPDATE subscribers SET active=false WHERE stripe_subscription_id=$1",
+      [event.data.object.id]).catch(console.error);
   }
-
   res.json({ received: true });
 });
 
-// ─── UNSUBSCRIBE ──────────────────────────────────────────────────────────────
-app.post("/unsubscribe", async (req, res) => {
-  const { phone } = req.body;
-  if (!phone) return res.status(400).json({ error: "phone required" });
-  await db.query("UPDATE subscribers SET active = false WHERE phone = $1", [phone]);
-  res.json({ ok: true });
-});
-
-// ─── ALERT LOGIC ─────────────────────────────────────────────────────────────
-
-const SOCRATA = "https://data.cityofnewyork.us/resource";
-
-async function fetchCleaningForStreet(street) {
-  const name = street.trim().toUpperCase();
-  const url = `${SOCRATA}/xswq-wnv9.json?$where=upper(street)=%27${encodeURIComponent(name)}%27 AND upper(description) LIKE %27%25STREET CLEANING%25%27&$limit=20`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  return res.json();
-}
-
-async function fetchFilmPermitsForStreet(street) {
-  const name = street.trim().toUpperCase();
-  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
-  const dayAfter = new Date(); dayAfter.setDate(dayAfter.getDate() + 2);
-  const fmt = d => d.toISOString().split("T")[0] + "T00:00:00.000";
-
-  const url = `${SOCRATA}/tg4x-b46p.json?$where=upper(parkingheld) LIKE %27%25${encodeURIComponent(name)}%25%27 AND startdatetime >= %27${fmt(tomorrow)}%27 AND startdatetime <= %27${fmt(dayAfter)}%27&$limit=5`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    return res.json();
-  } catch { return []; }
-}
-
-async function fetchWeatherAlert(lat, lng) {
-  if (!lat || !lng) return null;
-  try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&daily=weather_code,precipitation_sum,snowfall_sum&forecast_days=2&timezone=America%2FNew_York`;
-    const res = await fetch(url);
-    const data = await res.json();
-    // Tomorrow's forecast (index 1)
-    const code = data.daily?.weather_code?.[1];
-    const snow = data.daily?.snowfall_sum?.[1];
-    const rain = data.daily?.precipitation_sum?.[1];
-
-    const SEVERE = [51,53,55,61,63,65,71,73,75,77,80,81,82,85,86,95,96,99];
-    if (SEVERE.includes(code)) {
-      if (snow > 0.5) return `❄️ Snow forecast tomorrow (${snow.toFixed(1)} inches). Move your car early.`;
-      if (rain > 0.5) return `🌧️ Heavy rain forecast tomorrow (${rain.toFixed(2)} inches).`;
-      return `⚠️ Severe weather forecast tomorrow. Check conditions before parking.`;
-    }
-    return null;
-  } catch { return null; }
-}
-
-function parseCleaningDays(row) {
-  const desc = row.description || "";
-  const days = [];
-  [["MON","Mon"],["TUE","Tue"],["WED","Wed"],["THU","Thu"],["FRI","Fri"],["SAT","Sat"],["SUN","Sun"]]
-    .forEach(([re,label]) => { if (new RegExp(re,"i").test(desc)) days.push(label); });
-  const timeMatch = desc.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM)?)\s*[-–TO]+\s*(\d{1,2}(?::\d{2})?\s*(?:AM|PM)?)/i);
-  return { days, time: timeMatch ? `${timeMatch[1].trim()} – ${timeMatch[2].trim()}` : null };
-}
-
-function getTomorrowAbbr() {
-  const d = new Date(); d.setDate(d.getDate() + 1);
-  return ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
-}
-
-// Send alerts to all active subscribers — runs nightly at 8PM ET
+// ─── NIGHTLY ALERT JOB ────────────────────────────────────────────────────────
 async function sendNightlyAlerts() {
   console.log("🚨 Running nightly alert job...");
-  const { rows: subscribers } = await db.query(
-    "SELECT * FROM subscribers WHERE active = true"
-  );
+  const { rows: subs } = await db.query("SELECT * FROM subscribers WHERE active = true");
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowAbbr = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][tomorrow.getDay()];
+  const tomorrowStr = tomorrow.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
 
-  const tomorrowAbbr = getTomorrowAbbr();
-  const tomorrowDate = new Date(); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const tomorrowStr = tomorrowDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-
-  for (const sub of subscribers) {
-    const messages = [];
-
+  for (const sub of subs) {
+    const msgs = [];
     try {
-      // 1. Check street cleaning
-      const cleaningData = await fetchCleaningForStreet(sub.street);
-      for (const row of cleaningData) {
-        const { days, time } = parseCleaningDays(row);
-        if (days.includes(tomorrowAbbr)) {
-          messages.push(`🧹 Street cleaning on ${sub.street} tomorrow${time ? ` from ${time}` : ""}. Move your car!`);
-          break;
+      // Street cleaning
+      const cleanResp = await fetch(`http://localhost:${PORT}/api/cleaning?street=${encodeURIComponent(sub.street)}`);
+      const cleaning = await cleanResp.json();
+      const cleaningTomorrow = cleaning.find(c => c.days.includes(tomorrowAbbr));
+      if (cleaningTomorrow) {
+        msgs.push(`🧹 Street cleaning on ${sub.street} tomorrow${cleaningTomorrow.time ? ` from ${cleaningTomorrow.time}` : ""}. Move your car!`);
+      }
+
+      // Film permits
+      const filmResp = await fetch(`http://localhost:${PORT}/api/films?street=${encodeURIComponent(sub.street)}`);
+      const films = await filmResp.json();
+      if (films.length > 0) msgs.push(`🎬 Film shoot on ${sub.street} tomorrow — parking may be restricted.`);
+
+      // Weather
+      if (sub.lat && sub.lng) {
+        const wxResp = await fetch(`http://localhost:${PORT}/api/weather?lat=${sub.lat}&lng=${sub.lng}`);
+        const wx = await wxResp.json();
+        const code = wx?.daily?.weather_code?.[1];
+        const snow = wx?.daily?.snowfall_sum?.[1];
+        const rain = wx?.daily?.precipitation_sum?.[1];
+        const SEVERE = [51,53,55,61,63,65,71,73,75,77,80,81,82,85,86,95,96,99];
+        if (SEVERE.includes(code)) {
+          msgs.push(snow > 0.5 ? `❄️ Snow tomorrow (${snow.toFixed(1)}"). Move your car early.`
+            : rain > 0.5 ? `🌧️ Heavy rain tomorrow. Street cleaning may still be enforced.`
+            : `⚠️ Severe weather tomorrow. Check parking conditions.`);
         }
       }
 
-      // 2. Check film permits
-      const films = await fetchFilmPermitsForStreet(sub.street);
-      if (films.length > 0) {
-        messages.push(`🎬 Film shoot on ${sub.street} tomorrow — parking may be restricted.`);
-      }
-
-      // 3. Check weather
-      const wxAlert = await fetchWeatherAlert(sub.lat, sub.lng);
-      if (wxAlert) messages.push(wxAlert);
-
-      // Send combined SMS if there's anything to say
-      if (messages.length > 0) {
-        const body = `Street Park Info Alert for ${sub.street} — ${tomorrowStr}:\n\n${messages.join("\n\n")}\n\nReply STOP to cancel.`;
+      if (msgs.length > 0) {
         await twilioClient.messages.create({
-          body,
+          body: `Street Park Info — ${tomorrowStr}:\n\n${msgs.join("\n\n")}\n\nReply STOP to cancel.`,
           from: process.env.TWILIO_PHONE_NUMBER,
           to: sub.phone,
         });
-
-        // Log it
-        for (const msg of messages) {
-          await db.query(
-            "INSERT INTO alert_log (subscriber_id, message, type) VALUES ($1, $2, $3)",
-            [sub.id, msg, "nightly"]
-          );
-        }
-
-        console.log(`✅ Alerted ${sub.phone} for ${sub.street}: ${messages.length} alerts`);
+        console.log(`✅ Alerted ${sub.phone}: ${msgs.length} alerts`);
       }
     } catch (err) {
-      console.error(`❌ Failed to alert ${sub.phone}:`, err.message);
+      console.error(`❌ Failed ${sub.phone}:`, err.message);
     }
-
-    // Rate limit: 1 SMS per 100ms to avoid Twilio limits
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, 150));
   }
-
-  console.log(`✅ Alert job complete. ${subscribers.length} subscribers checked.`);
+  console.log(`✅ Done. ${subs.length} subscribers checked.`);
 }
 
-// ─── CRON JOBS ────────────────────────────────────────────────────────────────
-// Nightly alerts at 8PM Eastern
+// ─── CRON ────────────────────────────────────────────────────────────────────
 cron.schedule("0 20 * * *", sendNightlyAlerts, { timezone: "America/New_York" });
-
-// Self-ping every 14 minutes to keep Render free tier awake
 cron.schedule("*/14 * * * *", () => {
-  fetch(`https://${process.env.RENDER_SERVICE_URL || "localhost:" + PORT}/health`)
-    .catch(() => {}); // silent — just keeping alive
+  fetch(`https://${process.env.RENDER_SERVICE_URL || `localhost:${PORT}`}/health`).catch(() => {});
 });
 
-// ─── MANUAL TRIGGER (for testing) ────────────────────────────────────────────
+// ─── ADMIN ───────────────────────────────────────────────────────────────────
 app.post("/admin/trigger-alerts", async (req, res) => {
-  const { secret } = req.body;
-  if (secret !== process.env.ADMIN_SECRET) return res.status(401).json({ error: "unauthorized" });
+  if (req.body.secret !== process.env.ADMIN_SECRET) return res.status(401).json({ error: "unauthorized" });
   sendNightlyAlerts().catch(console.error);
-  res.json({ ok: true, message: "Alert job triggered" });
+  res.json({ ok: true });
 });
 
-// ─── START ────────────────────────────────────────────────────────────────────
+// ─── DB INIT + START ──────────────────────────────────────────────────────────
+async function initDB() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS subscribers (
+      id SERIAL PRIMARY KEY,
+      phone TEXT NOT NULL UNIQUE,
+      street TEXT NOT NULL,
+      borough TEXT DEFAULT '',
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      plan TEXT DEFAULT 'trial',
+      trial_ends_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 days',
+      active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS alert_log (
+      id SERIAL PRIMARY KEY,
+      subscriber_id INTEGER REFERENCES subscribers(id),
+      message TEXT,
+      sent_at TIMESTAMPTZ DEFAULT NOW(),
+      type TEXT
+    );
+  `);
+  console.log("✅ DB ready");
+}
+
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`🚗 Street Park Info backend running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚗 Street Park Info running on port ${PORT}`));
 });

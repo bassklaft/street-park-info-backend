@@ -189,86 +189,84 @@ app.get("/api/reverse-geocode", async (req, res) => {
 app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 // These run server-side so there's no 403 CORS issue from the browser
 
-// Street cleaning schedule — uses OpenCurb API (free, no key, works by lat/lng)
-// Falls back to DOT dataset by street name
+// Street cleaning — uses Claude AI to interpret schedule + DOT API as enrichment
 app.get("/api/cleaning", async (req, res) => {
   const { street, lat, lng } = req.query;
-  if (!street && (!lat || !lng)) return res.json([]);
+  if (!street) return res.json([]);
 
-  // If we have coordinates, use OpenCurb (most accurate — queries by location)
-  if (lat && lng) {
-    try {
-      const url = `https://www.opencurb.nyc/api/v1/signs?lat=${lat}&lng=${lng}&radius=50`;
-      const r = await fetch(url, { headers: { "Accept": "application/json" } });
-      if (r.ok) {
-        const data = await r.json();
-        const signs = Array.isArray(data) ? data : (data.signs || data.results || []);
-        const results = signs
-          .filter(s => {
-            const txt = (s.description || s.sign_text || s.regulation || s.text || "").toUpperCase();
-            return txt.includes("STREET CLEANING") || txt.includes("NO PARKING");
-          })
-          .map(s => {
-            const text = s.description || s.sign_text || s.regulation || s.text || "";
-            const parsed = parseSignText(text);
-            if (!parsed || !parsed.days.length) return null;
-            return {
-              street: street || s.street || "",
-              side: s.side || s.curb_side || "",
-              days: parsed.days,
-              time: parsed.time,
-              raw: parsed.raw,
-            };
-          })
-          .filter(Boolean);
+  const name = normalizeStreet(street);
 
-        if (results.length > 0) return res.json(dedupe(results));
+  // Ask Claude to provide the street cleaning schedule based on its NYC knowledge
+  // This is the reliable fallback when DOT APIs are inconsistent
+  try {
+    const prompt = `You are an NYC parking expert. For the street "${name}" in New York City, provide the street cleaning (alternate side parking) schedule.
+
+Respond ONLY with a JSON array. Each object should have:
+- "days": array of day abbreviations like ["Mon", "Thu"]  
+- "time": time range string like "8 AM – 9:30 AM"
+- "side": "Left / Even side" or "Right / Odd side" or ""
+- "raw": the full sign text as it would appear on a NYC street sign
+
+If you don't know the specific schedule for this street, return an empty array [].
+If the street has multiple schedules (different sides, different blocks), include all of them.
+
+Return ONLY the JSON array, no other text.`;
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-opus-4-5",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const text = data.content?.[0]?.text || "[]";
+      try {
+        const cleaned = text.replace(/```json|```/g, "").trim();
+        const schedule = JSON.parse(cleaned);
+        if (Array.isArray(schedule) && schedule.length > 0) {
+          console.log(`Claude returned ${schedule.length} cleaning rules for ${name}`);
+          return res.json(schedule);
+        }
+      } catch (e) {
+        console.error("Claude parse error:", e.message);
       }
-    } catch (e) {
-      console.error("OpenCurb error:", e.message);
     }
+  } catch (e) {
+    console.error("Claude API error:", e.message);
   }
 
-  // Fallback: DOT Socrata dataset by street name
-  // This dataset is two linked tables — we query both and join on order number
-  const name = normalizeStreet(street || "");
+  // Fallback: try DOT Socrata dataset
   const encoded = encodeURIComponent(name);
-
   try {
-    // Query locations table for the street, get order numbers
-    const locUrl = `${SOCRATA}/xswq-wnv9.json?$where=upper(street)%20LIKE%20'%25${encoded}%25'&$limit=200&$select=order_no,street,side_of_street,fromhousenumber,tohousenumber,signdesc`;
-    const r = await fetch(locUrl, { headers: nycHeaders });
-    if (!r.ok) {
-      console.error("DOT API error:", r.status);
-      return res.json([]);
-    }
-    const raw = await r.json();
-    console.log(`DOT returned ${raw.length} rows for "${name}"`);
-
-    const results = raw
-      .map(row => {
+    const url = `${SOCRATA}/xswq-wnv9.json?$where=upper(street)%20LIKE%20'%25${encoded}%25'&$limit=200`;
+    const r = await fetch(url, { headers: nycHeaders });
+    if (r.ok) {
+      const raw = await r.json();
+      console.log(`DOT returned ${raw.length} rows for "${name}"`);
+      const results = raw.map(row => {
         const text = row.signdesc || row.description || row.sign_text || "";
         const upper = text.toUpperCase();
         if (!upper.includes("STREET CLEANING") && !upper.includes("NO PARKING")) return null;
         const parsed = parseSignText(text);
         if (!parsed || !parsed.days.length) return null;
-        return {
-          street: row.street || name,
-          side: row.side_of_street || "",
-          fromHouse: row.fromhousenumber || "",
-          toHouse: row.tohousenumber || "",
-          days: parsed.days,
-          time: parsed.time,
-          raw: parsed.raw,
-        };
-      })
-      .filter(Boolean);
-
-    res.json(dedupe(results));
-  } catch (err) {
-    console.error("Cleaning fetch error:", err.message);
-    res.json([]);
+        return { street: row.street || name, side: row.side_of_street || "", days: parsed.days, time: parsed.time, raw: parsed.raw };
+      }).filter(Boolean);
+      return res.json(dedupe(results));
+    }
+  } catch (e) {
+    console.error("DOT fallback error:", e.message);
   }
+
+  res.json([]);
 });
 
 function dedupe(results) {

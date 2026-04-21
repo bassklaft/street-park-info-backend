@@ -155,19 +155,33 @@ app.get("/api/cleaning", async (req, res) => {
 
   try {
     const locationCtx = lat && lng ? `at approximately ${lat}, ${lng}` : `in ${borough || "NYC"}`;
-    const text = await askClaude(`You are an NYC alternate side parking expert.
+    const text = await askClaude(`You are an NYC alternate side parking expert. Return ONLY a raw JSON array, no other text.
 
-For the street "${street}" ${locationCtx}, provide the exact street cleaning (alternate side parking) schedule.
+Street: "${street}" ${locationCtx}
 
-Respond ONLY with a JSON array. Each item:
-{ "days": ["Mon","Thu"], "time": "8 AM - 9:30 AM", "side": "Left / Even side", "raw": "NO PARKING 8AM-9:30AM MON & THUR" }
+Rules:
+- Return a JSON array of cleaning schedules
+- If unknown, return exactly: []
+- Do NOT write any explanation, preamble, or prose
+- Do NOT use markdown code blocks
+- Start your response with [ and end with ]
 
-- Include BOTH sides if they have different schedules
-- Use exact NYC DOT sign language in raw field
-- Return [] if you genuinely don't know this street's schedule`);
+Each item in the array must be exactly this shape:
+{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"Left / Even side","raw":"NO PARKING 8AM-9:30AM MON & THUR"}
 
-    const schedule = JSON.parse(text.replace(/```json|```/g,"").trim());
-    if (Array.isArray(schedule) && schedule.length > 0) return res.json(schedule);
+Common NYC patterns:
+- Most Manhattan streets: Mon+Thu OR Tue+Fri, 8-9:30AM or 8:30-10AM or 11:30AM-1PM
+- Include both sides if different days
+- side is "Left / Even side" or "Right / Odd side" or ""
+
+Respond with ONLY the JSON array starting with [:`);
+
+    // Extract JSON array even if Claude added any surrounding text
+    const match = text.match(/\[[\s\S]*\]/);
+    if (match) {
+      const schedule = JSON.parse(match[0]);
+      if (Array.isArray(schedule) && schedule.length > 0) return res.json(schedule);
+    }
   } catch (e) { console.error("Claude cleaning error:", e.message); }
 
   // DOT Socrata fallback

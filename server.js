@@ -132,7 +132,7 @@ KEY COORDS: intrepid=40.7648,-74.0079 | times sq=40.7580,-73.9855 | uws=40.7870,
 
 ZIP STREETS: 10001=[WEST 34 STREET,SEVENTH AVENUE,EIGHTH AVENUE,NINTH AVENUE,TENTH AVENUE] | 10014=[HUDSON STREET,BLEECKER STREET,CHRISTOPHER STREET,WEST 4 STREET] | 10023=[BROADWAY,AMSTERDAM AVENUE,COLUMBUS AVENUE,WEST END AVENUE,RIVERSIDE DRIVE] | 10036=[WEST 42 STREET,EIGHTH AVENUE,NINTH AVENUE,TENTH AVENUE,ELEVENTH AVENUE] | 11211=[BEDFORD AVENUE,BERRY STREET,WYTHE AVENUE,NORTH 6 STREET,METROPOLITAN AVENUE,GRAND STREET] | 11215=[FIFTH AVENUE,SEVENTH AVENUE,FLATBUSH AVENUE,PROSPECT PARK WEST,UNION STREET] | 11101=[JACKSON AVENUE,QUEENS BOULEVARD,NORTHERN BOULEVARD,THOMSON AVENUE,HUNTER STREET]
 
-Return ONLY the JSON, no markdown.`, 2500);
+Return ONLY the JSON, no markdown.`, 3000);
 
     const loc = JSON.parse(raw.replace(/```json|```/g,"").trim());
 
@@ -140,7 +140,22 @@ Return ONLY the JSON, no markdown.`, 2500);
 
     // Neighborhood — treat like zip but with neighborhoodStreets
     if (loc.type === "neighborhood" || loc.isNeighborhood) {
-      return res.json({ ...loc, isNeighborhood: true, isZip: false, isPark: false, isEstablishment: false, zipStreets: loc.neighborhoodStreets || [], originalQuery: q });
+      const streets = (loc.neighborhoodStreets || loc.zipStreets || []).sort();
+      console.log(`Neighborhood "${q}": ${streets.length} streets`);
+      if (streets.length === 0) {
+        // Claude didn't return streets — ask again specifically for streets
+        try {
+          const streetsRaw = await askClaude(`List ALL streets in the ${q} neighborhood of NYC. Return ONLY a JSON array of street names in ALL CAPS, alphabetically sorted. Example: ["ATLANTIC AVENUE","CLINTON STREET","COURT STREET"]. Return ONLY the array.`, 1500);
+          const match = streetsRaw.match(/\[[\s\S]*\]/);
+          if (match) {
+            const parsed = JSON.parse(match[0]);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              return res.json({ ...loc, isNeighborhood: true, isZip: false, isPark: false, isEstablishment: false, zipStreets: parsed.sort(), originalQuery: q });
+            }
+          }
+        } catch(e) { console.error("Neighborhood streets retry error:", e.message); }
+      }
+      return res.json({ ...loc, isNeighborhood: true, isZip: false, isPark: false, isEstablishment: false, zipStreets: streets, originalQuery: q });
     }
 
     if (loc.isEstablishment && loc.establishments?.length > 0 && userLat && userLng) {

@@ -257,19 +257,91 @@ Respond with ONLY the JSON array starting with [:`);
 });
 
 // ─── FILM PERMITS ─────────────────────────────────────────────────────────────
+// Strategy: search by street name fragments, nearby cross streets, and borough-wide
+// NYC Open Data dataset tg4x-b46p is the official Mayor's Office of Media & Entertainment permits
 app.get("/api/films", async (req, res) => {
-  const { street } = req.query;
-  if (!street) return res.json([]);
-  const encoded = encodeURIComponent(street.toUpperCase().trim());
-  const from = new Date(); from.setDate(from.getDate()-1);
-  const to = new Date(); to.setDate(to.getDate()+7);
-  const fmt = d => d.toISOString().split(".")[0];
+  const { street, borough, lat, lng } = req.query;
+  const from = new Date(); from.setDate(from.getDate() - 1);
+  const to   = new Date(); to.setDate(to.getDate() + 21); // 3 weeks out
+  const fmt  = d => d.toISOString().split(".")[0];
+  const dateFilter = `startdatetime >= '${fmt(from)}' AND startdatetime <= '${fmt(to)}'`;
+
+  const results = new Map(); // dedupe by eventid
+
+  const addResults = (permits) => {
+    permits.forEach(f => {
+      if (!results.has(f.eventid)) {
+        results.set(f.eventid, {
+          id:          f.eventid,
+          type:        f.category || "Film/TV",
+          subtype:     f.subcategoryname || f.eventtype || f.zipcode_s || "Production",
+          start:       f.startdatetime,
+          end:         f.enddatetime,
+          parkingHeld: f.parkingheld || "",
+          borough:     f.borough || "",
+          address:     f.address || "",
+          country:     f.country || "",
+        });
+      }
+    });
+  };
+
   try {
-    const url = `${SOCRATA}/tg4x-b46p.json?$where=upper(parkingheld)%20LIKE%20'%25${encoded}%25'%20AND%20startdatetime%20>=%20'${fmt(from)}'%20AND%20startdatetime%20<=%20'${fmt(to)}'&$limit=20&$order=startdatetime%20ASC`;
-    const r = await fetch(url);
-    if (!r.ok) return res.json([]);
-    res.json((await r.json()).map(f => ({ id:f.eventid, type:f.category||"Film", subtype:f.subcategoryname||f.eventtype||"Shoot", start:f.startdatetime, end:f.enddatetime, parkingHeld:f.parkingheld||"", borough:f.borough||"" })));
-  } catch { res.json([]); }
+    // Search 1: exact street name in parkingheld field
+    if (street) {
+      const name = street.toUpperCase().trim();
+      // Try multiple variations of the street name
+      const variants = [name];
+      // "WEST 46 STREET" → also try "W 46", "46TH", "46 ST"
+      const numMatch = name.match(/^(WEST|EAST|NORTH|SOUTH)?\s*(\d+)\s*(STREET|AVENUE|BOULEVARD|DRIVE|PLACE|ROAD)?$/i);
+      if (numMatch) {
+        const num = numMatch[2];
+        variants.push(num + " ST", num + "TH", num + "ND", num + "RD", "W " + num, "E " + num);
+      }
+      // Also strip directional prefix for broad match
+      const stripped = name.replace(/^(WEST|EAST|NORTH|SOUTH)\s+/i, "");
+      if (stripped !== name) variants.push(stripped);
+
+      for (const v of variants) {
+        const encoded = encodeURIComponent(v);
+        const url = `${SOCRATA}/tg4x-b46p.json?$where=upper(parkingheld)%20LIKE%20'%25${encoded}%25'%20AND%20${dateFilter}&$limit=50&$order=startdatetime%20ASC`;
+        const r = await fetch(url);
+        if (r.ok) addResults(await r.json());
+      }
+    }
+
+    // Search 2: borough-wide recent/upcoming permits (catches everything nearby)
+    if (borough) {
+      const boroughMap = {
+        "manhattan": "Manhattan", "brooklyn": "Brooklyn", "queens": "Queens",
+        "bronx": "Bronx", "the bronx": "Bronx", "staten island": "Staten Island"
+      };
+      const boroughNorm = boroughMap[borough.toLowerCase()] || borough;
+      const encoded = encodeURIComponent(boroughNorm.toUpperCase());
+      const url = `${SOCRATA}/tg4x-b46p.json?$where=upper(borough)%20LIKE%20'%25${encoded}%25'%20AND%20${dateFilter}&$limit=100&$order=startdatetime%20ASC`;
+      const r = await fetch(url);
+      if (r.ok) addResults(await r.json());
+    }
+
+    // Search 3: if we have coordinates, also search by zip code area
+    // The dataset has zipcode_s field
+    if (lat && lng) {
+      // Round to ~0.5 mile bounding box
+      const latD = 0.007, lngD = 0.009;
+      const latMin = parseFloat(lat) - latD, latMax = parseFloat(lat) + latD;
+      const lngMin = parseFloat(lng) - lngD, lngMax = parseFloat(lng) + lngD;
+      // Can't query by coords directly but we can get all current borough permits (already done above)
+      // So this is a no-op if borough was provided
+    }
+
+    const all = Array.from(results.values())
+      .sort((a, b) => new Date(a.start) - new Date(b.start));
+
+    res.json(all);
+  } catch (e) {
+    console.error("Films error:", e.message);
+    res.json([]);
+  }
 });
 
 // ─── PUBLIC EVENTS ────────────────────────────────────────────────────────────

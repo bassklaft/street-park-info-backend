@@ -76,61 +76,41 @@ app.get("/api/geocode", async (req, res) => {
 
   let raw = "";
   try {
-    raw = await askClaude(`You are an NYC geography and parking expert. A driver typed: "${q}"
+    raw = await askClaude(`You are a US urban geography and parking expert covering all major cities. A driver typed: "${q}"
 
-First decide: is this AMBIGUOUS? (could refer to multiple different things in NYC)
-Then decide: is this a NEIGHBORHOOD? (a named NYC neighborhood with multiple streets)
+First detect the CITY this refers to. Supported cities: New York City, Los Angeles, Chicago, San Francisco, Boston, Philadelphia, Washington DC, Seattle.
+If no city is clear from the query, default to New York City.
 
-If AMBIGUOUS (could be neighborhood AND street AND/OR landmark):
-{
-  "type": "ambiguous",
-  "label": "Greenpoint",
-  "options": [
-    { "category": "Neighborhood", "label": "Greenpoint, Brooklyn", "type": "neighborhood", "street": "MANHATTAN AVENUE", "borough": "Brooklyn", "neighborhood": "Greenpoint", "lat": 40.7282, "lng": -73.9542, "neighborhoodStreets": ["ASH STREET","BOX STREET","CALYER STREET","EAGLE STREET","FREEMAN STREET","GREENPOINT AVENUE","HURON STREET","INDIA STREET","JAVA STREET","KENT STREET","LORIMER STREET","MANHATTAN AVENUE","MESEROLE AVENUE","MONITOR STREET","NASSAU AVENUE","NEWEL STREET","NORMAN AVENUE","PROVOST STREET","RICHARDSON STREET","RUSSELL STREET","VAN DAM STREET"] },
-    { "category": "Street", "label": "Greenpoint Ave, Brooklyn", "type": "location", "street": "GREENPOINT AVENUE", "borough": "Brooklyn", "neighborhood": "Greenpoint", "lat": 40.7270, "lng": -73.9490 },
-    { "category": "Street", "label": "Greenpoint Ave, Queens", "type": "location", "street": "GREENPOINT AVENUE", "borough": "Queens", "neighborhood": "Sunnyside", "lat": 40.7447, "lng": -73.9165 }
-  ]
-}
+Then classify the query using the same types as before.
 
-If NEIGHBORHOOD (clearly a specific NYC neighborhood, not ambiguous):
-{
-  "type": "neighborhood",
-  "label": "Brooklyn Heights, Brooklyn",
-  "isNeighborhood": true,
-  "street": "BROOKLYN HEIGHTS PROMENADE",
-  "borough": "Brooklyn",
-  "neighborhood": "Brooklyn Heights",
-  "lat": 40.6960,
-  "lng": -73.9951,
-  "neighborhoodStreets": ["ATLANTIC AVENUE","BROOKLYN HEIGHTS PROMENADE","CLARK STREET","COLUMBIA HEIGHTS","CRANBERRY STREET","GRACE COURT","HENRY STREET","HICKS STREET","JORALEMON STREET","LOVE LANE","MIDDAGH STREET","MONTAGUE STREET","ORANGE STREET","PIERREPONT STREET","PINEAPPLE STREET","POPLAR STREET","REMSEN STREET","VINE STREET","WILLOW STREET","WILLOW PLACE"]
-}
-neighborhoodStreets must be ALL streets in the neighborhood, sorted alphabetically.
+LOCAL SLANG AND NICKNAMES BY CITY:
+NYC: "the city"=Manhattan | "BK"=Brooklyn | "the bronx"=Bronx | "SI"=Staten Island | "LIC"=Long Island City | "UWS"=Upper West Side | "UES"=Upper East Side | "HK" or "Hell's Kitchen"=Clinton | "Noho","Soho","Tribeca","Dumbo","Nolita"=neighborhoods | "the village"=Greenwich Village | "alphabet city"=East Village | "the slope"=Park Slope | "the heights"=Washington Heights or Brooklyn Heights | "Ditmas"=Ditmas Park | "Prospect-Lefferts"=PLG
+LA: "WeHo"=West Hollywood | "SaMo"=Santa Monica | "DTLA"=Downtown LA | "the valley"=San Fernando Valley | "Los Feliz"=Los Feliz | "Sil Lake"=Silver Lake | "echo"=Echo Park | "Bev Hills"=Beverly Hills | "Palms"=Palms | "Mar Vista"=Mar Vista | "Culver"=Culver City | "K-town"=Koreatown | "MacArthur Park"=Westlake | "the eastside"=East LA/Boyle Heights
+Chicago: "the loop"=Loop | "Wicker"=Wicker Park | "Boystown"=Lakeview East | "the mag mile"=Magnificent Mile | "Pilsen"=Pilsen | "Little Village"=South Lawndale | "Bridgeport"=Bridgeport | "Lincoln Square"=Lincoln Square | "RoNo"=Rogers Park | "Andersonville"=Andersonville | "Uptown"=Uptown | "Humboldt"=Humboldt Park | "Logan"=Logan Square | "Ukrainian Village"=Ukrainian Village | "Noble Square"=Noble Square
+SF: "the mish"=Mission District | "the haight"=Haight-Ashbury | "SOMA"=South of Market | "the TL"=Tenderloin | "Noe"=Noe Valley | "the castro"=Castro | "the avenues"=Sunset/Richmond | "the sunset"=Outer Sunset | "inner sunset"=Inner Sunset | "the richmond"=Richmond District | "dogpatch"=Dogpatch | "potrero"=Potrero Hill | "bernal"=Bernal Heights | "glen park"=Glen Park | "excelsior"=Excelsior | "visitacion"=Visitacion Valley | "bayview"=Bayview | "hunters point"=Hunters Point
+Boston: "JP"=Jamaica Plain | "Dot"=Dorchester | "Southie"=South Boston | "Eastie"=East Boston | "the north end"=North End | "Allston/Brighton"=Allston | "the fenway"=Fenway | "the back bay"=Back Bay | "beacon hill"=Beacon Hill | "the south end"=South End | "Rozzie"=Roslindale | "West Rox"=West Roxbury | "Hyde Park"=Hyde Park | "Charlestown"=Charlestown | "Camberville"=Cambridge/Somerville
+Philadelphia: "Fishtown"=Fishtown | "NoLibs"=Northern Liberties | "Fairmount"=Fairmount | "the Italian market"=South Philly | "Rittenhouse"=Rittenhouse Square | "Old City"=Old City | "Manayunk"=Manayunk | "Kensington"=Kensington | "West Philly"=West Philadelphia | "Mt Airy"=Mount Airy | "Chestnut Hill"=Chestnut Hill | "East Falls"=East Falls | "Roxborough"=Roxborough
+DC: "Adams Morgan"=Adams Morgan | "U Street"=U Street Corridor | "H Street"=H Street NE | "the Hill"=Capitol Hill | "Navy Yard"=Navy Yard | "Georgetown"=Georgetown | "Dupont"=Dupont Circle | "Woodley"=Woodley Park | "Columbia Heights"=Columbia Heights | "Petworth"=Petworth | "Shaw"=Shaw | "Logan"=Logan Circle | "NoMa"=North of Massachusetts Ave | "Brookland"=Brookland
+Seattle: "Cap Hill"=Capitol Hill | "Fremont"=Fremont | "Ballard"=Ballard | "the CD"=Central District | "SLU"=South Lake Union | "Beacon"=Beacon Hill | "Columbia City"=Columbia City | "Georgetown"=Georgetown | "SODO"=South of Downtown | "Belltown"=Belltown | "Queen Anne"=Queen Anne | "Magnolia"=Magnolia | "Greenlake"=Green Lake | "Wallingford"=Wallingford | "U District"=University District | "Ravenna"=Ravenna
 
-If ESTABLISHMENT: { "type": "establishment", "label": "McDonald's NYC", "isEstablishment": true, "establishments": [{ "name": "McDonald's Times Square", "street": "WEST 42 STREET", "borough": "Manhattan", "neighborhood": "Midtown", "address": "220 W 42nd St", "lat": 40.7580, "lng": -73.9855 }] }
+KEY COORDS BY CITY:
+NYC: times sq=40.7580,-73.9855 | central park=40.7851,-73.9683 | brooklyn heights=40.6960,-73.9951 | williamsburg=40.7081,-73.9571 | astoria=40.7721,-73.9302 | greenpoint=40.7282,-73.9542 | park slope=40.6681,-73.9800 | lic=40.7447,-73.9485 | harlem=40.8116,-73.9465 | flushing=40.7675,-73.8330 | washington heights=40.8448,-73.9387
+LA: dtla=34.0522,-118.2437 | santa monica=34.0195,-118.4912 | west hollywood=34.0900,-118.3617 | silver lake=34.0870,-118.2695 | echo park=34.0780,-118.2606 | los feliz=34.1064,-118.2931 | koreatown=34.0586,-118.3005 | culver city=34.0211,-118.3965 | venice=33.9850,-118.4695 | pasadena=34.1478,-118.1445 | long beach=33.7701,-118.1937
+Chicago: loop=41.8827,-87.6233 | wicker park=41.9088,-87.6797 | lincoln park=41.9214,-87.6513 | lakeview=41.9400,-87.6553 | logan square=41.9217,-87.7079 | pilsen=41.8543,-87.6576 | hyde park=41.7943,-87.5907 | andersonville=41.9812,-87.6680 | humboldt park=41.9006,-87.7226 | boystown=41.9436,-87.6490
+SF: mission=37.7599,-122.4148 | haight=37.7692,-122.4481 | soma=37.7785,-122.3948 | castro=37.7609,-122.4350 | noe valley=37.7502,-122.4337 | richmond=37.7780,-122.4830 | sunset=37.7525,-122.4875 | bernal heights=37.7390,-122.4153 | dogpatch=37.7596,-122.3902 | potrero hill=37.7590,-122.4014
+Boston: back bay=42.3503,-71.0810 | south end=42.3398,-71.0746 | beacon hill=42.3588,-71.0707 | cambridge=42.3736,-71.1097 | jamaica plain=42.3100,-71.1128 | dorchester=42.3014,-71.0641 | south boston=42.3388,-71.0447 | charlestown=42.3782,-71.0602 | allston=42.3540,-71.1323 | fenway=42.3467,-71.0972
+Philadelphia: center city=39.9526,-75.1652 | fishtown=39.9748,-75.1338 | northern liberties=39.9637,-75.1416 | south philly=39.9186,-75.1687 | west philly=39.9484,-75.2182 | manayunk=40.0278,-75.2266 | germantown=40.0359,-75.1724 | fairmount=39.9685,-75.1768 | rittenhouse=39.9496,-75.1727
+DC: georgetown=38.9076,-77.0723 | dupont=38.9096,-77.0434 | adams morgan=38.9211,-77.0419 | capitol hill=38.8897,-77.0038 | u street=38.9177,-77.0319 | columbia heights=38.9284,-77.0317 | navy yard=38.8762,-77.0053 | shaw=38.9122,-77.0231 | brookland=38.9344,-76.9941 | petworth=38.9394,-77.0269
+Seattle: capitol hill=47.6253,-122.3222 | fremont=47.6510,-122.3500 | ballard=47.6685,-122.3829 | belltown=47.6148,-122.3468 | queen anne=47.6373,-122.3565 | slu=47.6261,-122.3353 | central district=47.6062,-122.3014 | beacon hill=47.5693,-122.3070 | georgetown=47.5485,-122.3237 | u district=47.6614,-122.3152
 
-If PARK: { "type": "park", "label": "Central Park", "isPark": true, "street": "CENTRAL PARK WEST", "borough": "Manhattan", "neighborhood": "Upper West Side", "lat": 40.7851, "lng": -73.9683, "parkStreets": ["CENTRAL PARK WEST","FIFTH AVENUE","CENTRAL PARK NORTH","CENTRAL PARK SOUTH"] }
+Return the same JSON format as before but include a "city" field in every response.
+For NEIGHBORHOOD type include the city in the label e.g. "Wicker Park, Chicago".
+For LOCATION type include city and state e.g. "Silver Lake, Los Angeles".
 
-If ZIP: { "type": "zip", "label": "11211 Williamsburg", "isZip": true, "street": "BEDFORD AVENUE", "borough": "Brooklyn", "neighborhood": "Williamsburg", "lat": 40.7081, "lng": -73.9571, "zipStreets": ["BEDFORD AVENUE","BERRY STREET","WYTHE AVENUE","NORTH 6 STREET","METROPOLITAN AVENUE","GRAND STREET","UNION AVENUE"] }
-
-If specific LOCATION (intersection/address/landmark, not a neighborhood): { "type": "location", "street": "NINTH AVENUE", "borough": "Manhattan", "neighborhood": "Hell's Kitchen", "label": "Hell's Kitchen", "lat": 40.7638, "lng": -73.9918 }
-
-AMBIGUOUS EXAMPLES:
-- "greenpoint" → ambiguous: neighborhood BK + street BK + street Queens
-- "astoria" → ambiguous: neighborhood Queens + street Astoria Blvd Queens
-- "atlantic" → ambiguous: Atlantic Avenue BK (street) + Atlantic Terminal BK (landmark)
-- "chelsea" → ambiguous: neighborhood Manhattan + Chelsea Piers + Chelsea Market
-
-NEIGHBORHOOD EXAMPLES (not ambiguous):
-- "brooklyn heights" → neighborhood type with all its streets
-- "park slope" → neighborhood type with all its streets
-- "upper west side" → neighborhood type with all its streets
-- "hell's kitchen" → neighborhood type with all its streets
-- "greenwich village" → neighborhood type with all its streets
-- "flushing" → neighborhood type with all its streets
-
-KEY COORDS: intrepid=40.7648,-74.0079 | times sq=40.7580,-73.9855 | uws=40.7870,-73.9754 | ues=40.7736,-73.9566 | msg=40.7505,-73.9934 | central park=40.7851,-73.9683 | prospect park=40.6602,-73.9690 | west village=40.7339,-74.0042 | east village=40.7265,-73.9815 | soho=40.7233,-74.0030 | dumbo=40.7033,-73.9881 | williamsburg=40.7081,-73.9571 | lic=40.7447,-73.9485 | brooklyn heights=40.6960,-73.9951 | park slope=40.6681,-73.9800 | greenpoint=40.7282,-73.9542 | astoria=40.7721,-73.9302
-
-ZIP STREETS: 10001=[WEST 34 STREET,SEVENTH AVENUE,EIGHTH AVENUE,NINTH AVENUE,TENTH AVENUE] | 10014=[HUDSON STREET,BLEECKER STREET,CHRISTOPHER STREET,WEST 4 STREET] | 10023=[BROADWAY,AMSTERDAM AVENUE,COLUMBUS AVENUE,WEST END AVENUE,RIVERSIDE DRIVE] | 10036=[WEST 42 STREET,EIGHTH AVENUE,NINTH AVENUE,TENTH AVENUE,ELEVENTH AVENUE] | 11211=[BEDFORD AVENUE,BERRY STREET,WYTHE AVENUE,NORTH 6 STREET,METROPOLITAN AVENUE,GRAND STREET] | 11215=[FIFTH AVENUE,SEVENTH AVENUE,FLATBUSH AVENUE,PROSPECT PARK WEST,UNION STREET] | 11101=[JACKSON AVENUE,QUEENS BOULEVARD,NORTHERN BOULEVARD,THOMSON AVENUE,HUNTER STREET]
+AMBIGUOUS EXAMPLES (cross-city):
+- "lincoln park" → ambiguous: neighborhood Chicago + park NYC
+- "georgetown" → ambiguous: neighborhood DC + neighborhood Seattle
+- "mission" → ambiguous: neighborhood SF (Mission District) + could be other cities
 
 Return ONLY the JSON, no markdown.`, 3000);
 
@@ -145,7 +125,7 @@ Return ONLY the JSON, no markdown.`, 3000);
       if (streets.length === 0) {
         // Claude didn't return streets — ask again specifically for streets
         try {
-          const streetsRaw = await askClaude(`List ALL streets in the ${q} neighborhood of NYC. Return ONLY a JSON array of street names in ALL CAPS, alphabetically sorted. Example: ["ATLANTIC AVENUE","CLINTON STREET","COURT STREET"]. Return ONLY the array.`, 1500);
+          const streetsRaw = await askClaude(`List ALL streets in the ${q} neighborhood. Return ONLY a JSON array of street names in ALL CAPS, alphabetically sorted. Example: ["ATLANTIC AVENUE","CLINTON STREET","COURT STREET"]. Return ONLY the array.`, 1500);
           const match = streetsRaw.match(/\[[\s\S]*\]/);
           if (match) {
             const parsed = JSON.parse(match[0]);
@@ -168,21 +148,23 @@ Return ONLY the JSON, no markdown.`, 3000);
     }
   } catch (e) { console.error("Claude geocode error:", e.message); }
 
-  // Nominatim fallback
+  // Nominatim fallback — search all supported cities
   try {
-    const withCity = /new york|nyc|brooklyn|manhattan|bronx|queens|staten island/i.test(q) ? q : `${q}, New York City NY`;
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(withCity)}&format=json&limit=1&addressdetails=1&countrycodes=us&viewbox=-74.2591,40.4774,-73.7004,40.9176&bounded=1`;
+    const majorCities = /new york|nyc|brooklyn|manhattan|bronx|queens|staten island|los angeles|la |chicago|san francisco|sf |boston|philadelphia|philly|washington dc|seattle/i;
+    const withCity = majorCities.test(q) ? q : `${q}, United States`;
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(withCity)}&format=json&limit=1&addressdetails=1&countrycodes=us`;
     const r = await fetch(url, { headers: { "User-Agent": "StreetParkInfo/1.0" } });
     if (r.ok) {
       const data = await r.json();
       if (data.length > 0) {
         const item = data[0], addr = item.address || {};
-        return res.json({ type:"location", isEstablishment:false, isPark:false, isZip:false, street:(addr.road||addr.pedestrian||addr.suburb||q).toUpperCase(), borough:addr.borough||addr.city_district||addr.suburb||"", neighborhood:addr.neighbourhood||addr.suburb||"", label:q, originalQuery:q, lat:parseFloat(item.lat), lng:parseFloat(item.lon) });
+        const city = addr.city || addr.town || addr.county || "";
+        return res.json({ type:"location", isEstablishment:false, isPark:false, isZip:false, street:(addr.road||addr.pedestrian||addr.suburb||q).toUpperCase(), borough:addr.borough||addr.city_district||addr.suburb||"", neighborhood:addr.neighbourhood||addr.suburb||"", city, label:q, originalQuery:q, lat:parseFloat(item.lat), lng:parseFloat(item.lon) });
       }
     }
   } catch (e) { console.error("Nominatim error:", e.message); }
 
-  res.status(404).json({ error: `Couldn't find "${q}" in NYC. Try "34th & Broadway", "10036", or "Brooklyn Heights".` });
+  res.status(404).json({ error: `Couldn't find "${q}". Try a street name, zip code, or neighborhood in NYC, LA, Chicago, SF, Boston, Philadelphia, DC, or Seattle.` });
 });
 
 // Reverse geocode — also returns nearby streets sorted by distance
@@ -257,25 +239,31 @@ app.get("/api/cleaning", async (req, res) => {
   if (!street) return res.json([]);
 
   try {
-    const locationCtx = lat && lng ? `at approximately ${lat}, ${lng}` : `in ${borough || "NYC"}`;
-    const text = await askClaude(`You are an NYC alternate side parking expert. Return ONLY a raw JSON array, no other text.
+    const locationCtx = lat && lng ? `at approximately lat=${lat}, lng=${lng}` : `in ${borough || "the city"}`;
+    const text = await askClaude(`You are a US alternate side parking and street cleaning expert. Return ONLY a raw JSON array, no other text.
 
 Street: "${street}" ${locationCtx}
+
+Determine which city this street is in based on coordinates or context, then return accurate street cleaning schedules.
+
+CITY PATTERNS:
+- NYC (Manhattan): Mon+Thu OR Tue+Fri, typically 8-9:30AM or 8:30-10AM or 11:30AM-1PM
+- NYC (Brooklyn/Queens/Bronx): Mon+Thu OR Tue+Fri, similar times, some areas Sat
+- Los Angeles: typically once/week per side, Mon-Sat between 8AM-6PM varies by zone
+- Chicago: typically once/week per side, 7AM-9AM or 9AM-12PM varies by neighborhood
+- San Francisco: typically once/week per side, 8AM-9AM or 10AM-12PM varies by block
+- Boston: typically once/week, 8AM-11AM varies by neighborhood
+- Philadelphia: typically once/week per side, 8AM-9:30AM varies by zone
+- Washington DC: typically once/week per side, 7:30AM-9:30AM or 9:30AM-11AM
+- Seattle: typically once/week per side, 8AM-10AM varies by zone
 
 Rules:
 - Return a JSON array of cleaning schedules
 - If unknown, return exactly: []
 - Do NOT write any explanation, preamble, or prose
-- Do NOT use markdown code blocks
 - Start your response with [ and end with ]
 
-Each item in the array must be exactly this shape:
-{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"Left / Even side","raw":"NO PARKING 8AM-9:30AM MON & THUR"}
-
-Common NYC patterns:
-- Most Manhattan streets: Mon+Thu OR Tue+Fri, 8-9:30AM or 8:30-10AM or 11:30AM-1PM
-- Include both sides if different days
-- side is "Left / Even side" or "Right / Odd side" or ""
+Each item: {"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"Left / Even side","raw":"NO PARKING 8AM-9:30AM MON & THUR"}
 
 Respond with ONLY the JSON array starting with [:`);
 
@@ -313,17 +301,18 @@ app.get("/api/cleaning-batch", async (req, res) => {
   if (!streetsParam) return res.json({});
 
   const streets = streetsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 30);
-  const locationCtx = lat && lng ? `near lat ${lat}, lng ${lng}` : `in ${borough || "NYC"}`;
+  const locationCtx = lat && lng ? `near lat ${lat}, lng ${lng}` : `in ${borough || "the city"}`;
 
   try {
-    const text = await askClaude(`You are an NYC alternate side parking expert. Return cleaning schedules for ALL these streets ${locationCtx}:
+    const text = await askClaude(`You are a US alternate side parking expert covering NYC, LA, Chicago, SF, Boston, Philadelphia, DC, and Seattle. Return cleaning schedules for ALL these streets ${locationCtx}:
 
 ${streets.map((s, i) => `${i+1}. ${s}`).join("\n")}
 
+Determine the city from coordinates or context, then return accurate schedules.
 Return ONLY a JSON object where each key is the EXACT street name and value is an array of schedules.
-If you don't know a street's schedule, use an empty array [].
+If unknown use [].
 
-{"ATLANTIC AVENUE": [{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"","raw":"NO PARKING 8AM-9:30AM MON & THUR"}], "HICKS STREET": [], ...}
+{"BEDFORD AVENUE": [{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"","raw":"NO PARKING 8AM-9:30AM MON & THUR"}], "BERRY STREET": []}
 
 Return ONLY the JSON object starting with {:`, 3000);
 

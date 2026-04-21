@@ -78,16 +78,23 @@ app.get("/api/geocode", async (req, res) => {
   try {
     raw = await askClaude(`You are an NYC geography and parking expert. A driver typed: "${q}"
 
-Classify as: establishment | park | zip | location
+First decide: is this AMBIGUOUS? A query is ambiguous if it could refer to multiple different things in NYC — e.g. "Greenpoint" could be the neighborhood OR Greenpoint Avenue. "Astoria" could be the neighborhood OR Astoria Boulevard. "Atlantic" could be Atlantic Avenue OR Atlantic Terminal area.
 
-If ESTABLISHMENT (business/chain/restaurant/store - e.g. "McDonald's", "CVS", "Starbucks", "Chase Bank"):
+If AMBIGUOUS, return:
 {
-  "type": "establishment", "label": "McDonald's NYC locations", "isEstablishment": true,
-  "establishments": [
-    { "name": "McDonald's Times Square", "street": "WEST 42 STREET", "borough": "Manhattan", "neighborhood": "Midtown", "address": "220 W 42nd St", "lat": 40.7580, "lng": -73.9855 }
+  "type": "ambiguous",
+  "label": "Greenpoint",
+  "options": [
+    { "category": "Neighborhood", "label": "Greenpoint, Brooklyn", "type": "location", "street": "MANHATTAN AVENUE", "borough": "Brooklyn", "neighborhood": "Greenpoint", "lat": 40.7282, "lng": -73.9542 },
+    { "category": "Street", "label": "Greenpoint Ave, Queens", "type": "location", "street": "GREENPOINT AVENUE", "borough": "Queens", "neighborhood": "Sunnyside", "lat": 40.7447, "lng": -73.9165 }
   ]
 }
-List ALL known NYC locations (8-15+ for major chains), each with accurate lat/lng.
+
+Otherwise classify as: establishment | park | zip | location
+
+If ESTABLISHMENT (business/chain - e.g. "McDonald's", "CVS", "Starbucks"):
+{ "type": "establishment", "label": "McDonald's NYC locations", "isEstablishment": true, "establishments": [{ "name": "McDonald's Times Square", "street": "WEST 42 STREET", "borough": "Manhattan", "neighborhood": "Midtown", "address": "220 W 42nd St", "lat": 40.7580, "lng": -73.9855 }] }
+List ALL known NYC locations (8-15+ for major chains).
 
 If PARK:
 { "type": "park", "label": "Central Park", "isPark": true, "isEstablishment": false, "street": "CENTRAL PARK WEST", "borough": "Manhattan", "neighborhood": "Upper West Side", "lat": 40.7851, "lng": -73.9683, "parkStreets": ["CENTRAL PARK WEST","FIFTH AVENUE","CENTRAL PARK NORTH","CENTRAL PARK SOUTH"] }
@@ -95,16 +102,28 @@ If PARK:
 If ZIP CODE:
 { "type": "zip", "label": "11211 Williamsburg", "isZip": true, "isEstablishment": false, "street": "BEDFORD AVENUE", "borough": "Brooklyn", "neighborhood": "Williamsburg", "lat": 40.7081, "lng": -73.9571, "zipStreets": ["BEDFORD AVENUE","BERRY STREET","WYTHE AVENUE","NORTH 6 STREET","METROPOLITAN AVENUE","GRAND STREET","UNION AVENUE"] }
 
-If LOCATION (intersection/neighborhood/landmark/address):
+If LOCATION (specific intersection/landmark/address with no ambiguity):
 { "type": "location", "label": "Hell's Kitchen", "isEstablishment": false, "isPark": false, "isZip": false, "street": "NINTH AVENUE", "borough": "Manhattan", "neighborhood": "Hell's Kitchen", "lat": 40.7638, "lng": -73.9918 }
 
-KEY COORDS: intrepid=40.7648,-74.0079 | times sq=40.7580,-73.9855 | uws=40.7870,-73.9754 | ues=40.7736,-73.9566 | msg=40.7505,-73.9934 | high line=40.7480,-74.0048 | hudson yards=40.7539,-74.0005 | yankee stadium=40.8296,-73.9262 | barclays=40.6826,-73.9754 | 34th+broadway=40.7505,-73.9895 | central park=40.7851,-73.9683 | prospect park=40.6602,-73.9690 | west village=40.7339,-74.0042 | east village=40.7265,-73.9815 | soho=40.7233,-74.0030 | dumbo=40.7033,-73.9881 | williamsburg=40.7081,-73.9571 | lic=40.7447,-73.9485
+AMBIGUOUS EXAMPLES:
+- "greenpoint" → neighborhood Greenpoint Brooklyn + street Greenpoint Avenue Queens
+- "astoria" → neighborhood Astoria Queens + street Astoria Boulevard Queens
+- "atlantic" → Atlantic Avenue Brooklyn + Atlantic Terminal area
+- "park slope" → NOT ambiguous (clearly a neighborhood)
+- "broadway" → NOT ambiguous (clearly the street)
+- "34th and broadway" → NOT ambiguous (clearly an intersection)
+
+KEY COORDS: intrepid=40.7648,-74.0079 | times sq=40.7580,-73.9855 | uws=40.7870,-73.9754 | ues=40.7736,-73.9566 | msg=40.7505,-73.9934 | high line=40.7480,-74.0048 | hudson yards=40.7539,-74.0005 | yankee stadium=40.8296,-73.9262 | barclays=40.6826,-73.9754 | 34th+broadway=40.7505,-73.9895 | central park=40.7851,-73.9683 | prospect park=40.6602,-73.9690 | west village=40.7339,-74.0042 | east village=40.7265,-73.9815 | soho=40.7233,-74.0030 | dumbo=40.7033,-73.9881 | williamsburg=40.7081,-73.9571 | lic=40.7447,-73.9485 | greenpoint=40.7282,-73.9542 | astoria neighborhood=40.7721,-73.9302
 
 ZIP STREETS: 10001=[WEST 34 STREET,SEVENTH AVENUE,EIGHTH AVENUE,NINTH AVENUE,TENTH AVENUE] | 10014=[HUDSON STREET,BLEECKER STREET,CHRISTOPHER STREET,WEST 4 STREET] | 10023=[BROADWAY,AMSTERDAM AVENUE,COLUMBUS AVENUE,WEST END AVENUE,RIVERSIDE DRIVE] | 10036=[WEST 42 STREET,EIGHTH AVENUE,NINTH AVENUE,TENTH AVENUE,ELEVENTH AVENUE] | 11211=[BEDFORD AVENUE,BERRY STREET,WYTHE AVENUE,NORTH 6 STREET,METROPOLITAN AVENUE,GRAND STREET] | 11215=[FIFTH AVENUE,SEVENTH AVENUE,FLATBUSH AVENUE,PROSPECT PARK WEST,UNION STREET] | 11101=[JACKSON AVENUE,QUEENS BOULEVARD,NORTHERN BOULEVARD,THOMSON AVENUE,HUNTER STREET]
 
 Return ONLY the JSON, no markdown.`, 2000);
 
     const loc = JSON.parse(raw.replace(/```json|```/g,"").trim());
+
+    if (loc.type === "ambiguous") {
+      return res.json({ ...loc, originalQuery: q });
+    }
 
     if (loc.isEstablishment && loc.establishments?.length > 0 && userLat && userLng) {
       const uLat = parseFloat(userLat), uLng = parseFloat(userLng);

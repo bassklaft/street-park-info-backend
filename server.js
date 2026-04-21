@@ -307,7 +307,56 @@ Respond with ONLY the JSON array starting with [:`);
   res.json([]);
 });
 
-// ─── FILM PERMITS ─────────────────────────────────────────────────────────────
+// ─── PARKING HEAT MAP ─────────────────────────────────────────────────────────
+// Returns nearby streets with cleaning urgency for color-coded map display
+app.get("/api/heatmap", async (req, res) => {
+  const { lat, lng } = req.query;
+  if (!lat || !lng) return res.json([]);
+
+  try {
+    const raw = await askClaude(`You are an NYC parking expert. For coordinates lat=${lat}, lng=${lng}, list the 12 nearest streets with their alternate side parking schedules.
+
+Return ONLY a JSON array. Each item:
+{
+  "street": "WEST 46 STREET",
+  "schedule": [
+    { "days": ["Mon","Thu"], "time": "8 AM - 9:30 AM", "side": "N" },
+    { "days": ["Tue","Fri"], "time": "8 AM - 9:30 AM", "side": "S" }
+  ],
+  "coords": [[lat1,lng1],[lat2,lng2],[lat3,lng3]]
+}
+
+coords should be 2-4 points that draw the street segment near this location.
+Include the street the user is ON plus nearby parallel and cross streets.
+Return ONLY the JSON array.`, 2000);
+
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (match) {
+      const streets = JSON.parse(match[0]);
+      const today = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date().getDay()];
+      const tomorrow = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+86400000).getDay()];
+      const dayAfter = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+172800000).getDay()];
+
+      const result = streets.map(s => {
+        let urgency = "green"; // safe 4+ days
+        let nextClean = null;
+        for (const sch of (s.schedule || [])) {
+          const days = sch.days || [];
+          if (days.includes(today)) { urgency = "red"; nextClean = `Today ${sch.time}`; break; }
+          if (days.includes(tomorrow)) { urgency = "red"; nextClean = `Tomorrow ${sch.time}`; break; }
+          if (days.includes(dayAfter)) { if (urgency !== "red") urgency = "yellow"; nextClean = `In 2 days ${sch.time}`; }
+          else if (urgency === "green") { urgency = "green"; }
+        }
+        if (!s.schedule?.length) urgency = "gray";
+        return { ...s, urgency, nextClean };
+      });
+
+      return res.json(result);
+    }
+  } catch(e) { console.error("Heatmap error:", e.message); }
+
+  res.json([]);
+});
 // Strategy: search by street name fragments, nearby cross streets, and borough-wide
 // NYC Open Data dataset tg4x-b46p is the official Mayor's Office of Media & Entertainment permits
 app.get("/api/films", async (req, res) => {

@@ -185,19 +185,55 @@ Return ONLY the JSON, no markdown.`, 3000);
   res.status(404).json({ error: `Couldn't find "${q}" in NYC. Try "34th & Broadway", "10036", or "Brooklyn Heights".` });
 });
 
-// Reverse geocode
+// Reverse geocode — also returns nearby streets sorted by distance
 app.get("/api/reverse-geocode", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.status(400).json({ error: "lat and lng required" });
+
+  let primaryStreet = "", borough = "", neighborhood = "", label = "";
+
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`;
     const r = await fetch(url, { headers: { "User-Agent": "StreetParkInfo/1.0" } });
     if (r.ok) {
       const item = await r.json(), addr = item.address || {};
-      return res.json({ street:(addr.road||addr.pedestrian||addr.footway||"").toUpperCase(), borough:addr.borough||addr.city_district||addr.suburb||"", neighborhood:addr.neighbourhood||addr.suburb||"", label:item.display_name?.split(",").slice(0,2).join(",")||"", lat:parseFloat(lat), lng:parseFloat(lng) });
+      primaryStreet = (addr.road || addr.pedestrian || addr.footway || "").toUpperCase();
+      borough      = addr.borough || addr.city_district || addr.suburb || "";
+      neighborhood = addr.neighbourhood || addr.suburb || "";
+      label        = item.display_name?.split(",").slice(0,2).join(",") || "";
     }
   } catch (e) { console.error("Reverse geocode error:", e.message); }
-  res.status(502).json({ error: "Could not identify your street" });
+
+  if (!primaryStreet) return res.status(502).json({ error: "Could not identify your street" });
+
+  // Get nearby streets sorted by distance using Nominatim search in bounding box
+  let nearbyStreets = [];
+  try {
+    const raw = await askClaude(`You are an NYC geography expert. Given these coordinates: lat ${lat}, lng ${lng} (${neighborhood}, ${borough}), list the 8 nearest streets to this location, sorted from closest to farthest. The primary street is "${primaryStreet}".
+
+Return ONLY a JSON array of street names in ALL CAPS. Start with the primary street, then the nearest cross streets and parallel streets.
+Example: ["WEST 46 STREET","ELEVENTH AVENUE","WEST 45 STREET","WEST 47 STREET","TWELFTH AVENUE","TENTH AVENUE","WEST 44 STREET","WEST 48 STREET"]
+
+Return ONLY the JSON array.`);
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        nearbyStreets = parsed;
+      }
+    }
+  } catch (e) { console.error("Nearby streets error:", e.message); }
+
+  // Fallback if Claude fails
+  if (nearbyStreets.length === 0) nearbyStreets = [primaryStreet];
+
+  return res.json({
+    street: primaryStreet,
+    borough, neighborhood, label,
+    lat: parseFloat(lat), lng: parseFloat(lng),
+    isGPS: true,
+    nearbyStreets,
+  });
 });
 
 // Helper: get next N upcoming dates for given day abbreviations

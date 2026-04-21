@@ -307,7 +307,40 @@ Respond with ONLY the JSON array starting with [:`);
   res.json([]);
 });
 
-// ─── PARKING HEAT MAP ─────────────────────────────────────────────────────────
+// ─── BATCH CLEANING (for neighborhoods/zips — one Claude call for many streets) ─
+app.get("/api/cleaning-batch", async (req, res) => {
+  const { streets: streetsParam, lat, lng, borough } = req.query;
+  if (!streetsParam) return res.json({});
+
+  const streets = streetsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 30);
+  const locationCtx = lat && lng ? `near lat ${lat}, lng ${lng}` : `in ${borough || "NYC"}`;
+
+  try {
+    const text = await askClaude(`You are an NYC alternate side parking expert. Return cleaning schedules for ALL these streets ${locationCtx}:
+
+${streets.map((s, i) => `${i+1}. ${s}`).join("\n")}
+
+Return ONLY a JSON object where each key is the EXACT street name and value is an array of schedules.
+If you don't know a street's schedule, use an empty array [].
+
+{"ATLANTIC AVENUE": [{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"","raw":"NO PARKING 8AM-9:30AM MON & THUR"}], "HICKS STREET": [], ...}
+
+Return ONLY the JSON object starting with {:`, 3000);
+
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      const data = JSON.parse(match[0]);
+      // Add upcoming dates to each result
+      const result = {};
+      for (const [street, schedules] of Object.entries(data)) {
+        result[street] = (schedules || []).map(s => ({ ...s, upcomingDates: getUpcomingDates(s.days || []) }));
+      }
+      return res.json(result);
+    }
+  } catch(e) { console.error("Batch cleaning error:", e.message); }
+
+  res.json({});
+});
 // Returns nearby streets with cleaning urgency for color-coded map display
 app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;

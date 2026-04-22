@@ -258,7 +258,7 @@ app.get("/api/geocode", async (req, res) => {
   try {
     raw = await askClaude(`You are a US urban geography and parking expert covering all major cities. A driver typed: "${q}"
 
-First detect the CITY this refers to. Supported cities: New York City, Los Angeles, Chicago, San Francisco, Boston, Philadelphia, Washington DC, Seattle.
+First detect the CITY this refers to. Supported cities: New York City, Los Angeles, Chicago, San Francisco, Boston, Philadelphia, Washington DC, Seattle, Miami, Atlanta, Toronto, Denver, Portland OR, Nashville, Austin, Minneapolis.
 If no city is clear from the query, default to New York City.
 
 Then classify the query using the same types as before.
@@ -282,6 +282,14 @@ Boston: back bay=42.3503,-71.0810 | south end=42.3398,-71.0746 | beacon hill=42.
 Philadelphia: center city=39.9526,-75.1652 | fishtown=39.9748,-75.1338 | northern liberties=39.9637,-75.1416 | south philly=39.9186,-75.1687 | west philly=39.9484,-75.2182 | manayunk=40.0278,-75.2266 | germantown=40.0359,-75.1724 | fairmount=39.9685,-75.1768 | rittenhouse=39.9496,-75.1727
 DC: georgetown=38.9076,-77.0723 | dupont=38.9096,-77.0434 | adams morgan=38.9211,-77.0419 | capitol hill=38.8897,-77.0038 | u street=38.9177,-77.0319 | columbia heights=38.9284,-77.0317 | navy yard=38.8762,-77.0053 | shaw=38.9122,-77.0231 | brookland=38.9344,-76.9941 | petworth=38.9394,-77.0269
 Seattle: capitol hill=47.6253,-122.3222 | fremont=47.6510,-122.3500 | ballard=47.6685,-122.3829 | belltown=47.6148,-122.3468 | queen anne=47.6373,-122.3565 | slu=47.6261,-122.3353 | central district=47.6062,-122.3014 | beacon hill=47.5693,-122.3070 | georgetown=47.5485,-122.3237 | u district=47.6614,-122.3152
+Miami: brickell=25.7617,-80.1918 | wynwood=25.8008,-80.1993 | little havana=25.7667,-80.2270 | coconut grove=25.7253,-80.2385 | miami beach=25.7907,-80.1300 | south beach=25.7825,-80.1341 | midtown=25.8120,-80.1934 | design district=25.8153,-80.1960 | downtown=25.7742,-80.1937 | edgewater=25.7942,-80.1874
+Atlanta: midtown=33.7842,-84.3830 | buckhead=33.8484,-84.3788 | little five points=33.7649,-84.3507 | inman park=33.7524,-84.3535 | old fourth ward=33.7573,-84.3630 | virginia highland=33.7774,-84.3491 | east atlanta=33.7352,-84.3396 | west end=33.7344,-84.4130 | cabbagetown=33.7480,-84.3621 | grant park=33.7348,-84.3731
+Toronto: kensington market=43.6547,-79.4009 | queen west=43.6454,-79.4157 | distillery district=43.6503,-79.3592 | annex=43.6687,-79.4057 | yorkville=43.6709,-79.3924 | little italy=43.6554,-79.4210 | leslieville=43.6617,-79.3341 | roncesvalles=43.6473,-79.4486 | ossington=43.6522,-79.4244 | parkdale=43.6378,-79.4445
+Denver: lodo=39.7537,-104.9999 | rino=39.7687,-104.9766 | capitol hill=39.7296,-104.9805 | highland=39.7638,-105.0121 | wash park=39.6969,-104.9660 | cherry creek=39.7153,-104.9521 | five points=39.7534,-104.9741 | baker=39.7136,-104.9861 | curtis park=39.7579,-104.9700 | whittier=39.7500,-104.9614
+Portland: pearl district=45.5266,-122.6836 | alberta arts=45.5593,-122.6375 | hawthorne=45.5116,-122.6385 | mississippi ave=45.5546,-122.6769 | division=45.5033,-122.6348 | nob hill=45.5280,-122.6957 | inner southeast=45.5118,-122.6490 | woodstock=45.4844,-122.6262 | sellwood=45.4686,-122.6543 | st johns=45.5927,-122.7519
+Nashville: east nashville=36.1741,-86.7580 | 12 south=36.1201,-86.7970 | germantown=36.1784,-86.7878 | gulch=36.1502,-86.7937 | sylvan park=36.1536,-86.8327 | hillsboro village=36.1354,-86.8038 | belmont=36.1301,-86.7925 | five points=36.1748,-86.7517 | nations=36.1594,-86.8582 | buena vista=36.1653,-86.8046
+Austin: south congress=30.2432,-97.7503 | east austin=30.2589,-97.7202 | north loop=30.3184,-97.7200 | mueller=30.2970,-97.7032 | domain=30.4021,-97.7237 | rainey street=30.2587,-97.7389 | west campus=30.2901,-97.7463 | travis heights=30.2378,-97.7415 | clarksville=30.2795,-97.7614 | cherrywood=30.2784,-97.7220
+Minneapolis: uptown=44.9488,-93.2986 | northeast=44.9940,-93.2561 | north loop=44.9874,-93.2755 | dinkytown=44.9812,-93.2350 | seward=44.9499,-93.2278 | longfellow=44.9287,-93.2213 | south minneapolis=44.9138,-93.2707 | st anthony=44.9830,-93.2474 | powderhorn=44.9265,-93.2557 | linden hills=44.9110,-93.3251
 
 Return the same JSON format as before but include a "city" field in every response.
 For NEIGHBORHOOD type include the city in the label e.g. "Wicker Park, Chicago".
@@ -430,7 +438,7 @@ Return ONLY the array.`, 1000);
     }
   } catch (e) { console.error("Google geocode error:", e.message); }
 
-  res.status(404).json({ error: `Couldn't find "${q}". Try a street name, zip code, or neighborhood in NYC, LA, Chicago, SF, Boston, Philadelphia, DC, or Seattle.` });
+  res.status(404).json({ error: `Couldn't find "${q}". Try a street name, zip code, or neighborhood in NYC, LA, Chicago, SF, Boston, Philadelphia, DC, Seattle, Miami, Atlanta, Toronto, Denver, Portland, Nashville, Austin, or Minneapolis.` });
 });
 
 // Reverse geocode — uses Google for accuracy, returns nearby streets sorted by distance
@@ -601,10 +609,22 @@ Return ONLY the JSON object starting with {:`, 3000);
 
   res.json({});
 });
+// ─── HEATMAP CACHE ───────────────────────────────────────────────────────────
+const heatmapCache = new Map();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
 // ─── PARKING HEAT MAP — real street geometries from OpenStreetMap ─────────────
 app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
+
+  // Round to 3 decimal places (~100m grid) for cache key
+  const cacheKey = `${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cached = heatmapCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    console.log(`Heatmap cache hit: ${cacheKey}`);
+    return res.json(cached.data);
+  }
 
   try {
     // Step 1: Get real street geometries from Overpass API
@@ -654,6 +674,7 @@ Return ONLY the JSON object:`, 2000);
         return { street: name, coords, urgency, nextClean };
       });
 
+    heatmapCache.set(cacheKey, { data: result, ts: Date.now() });
     res.json(result);
   } catch(e) { console.error("Heatmap error:", e.message); res.json([]); }
 });

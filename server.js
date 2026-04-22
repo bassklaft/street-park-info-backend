@@ -1,5 +1,5 @@
 /**
- * Move My Car — Backend
+ * Street Park Now — Backend
  * Claude-powered NYC parking intelligence
  */
 
@@ -10,6 +10,7 @@ const cron    = require("node-cron");
 const { Pool }  = require("pg");
 const Stripe    = require("stripe");
 const twilio    = require("twilio");
+const crypto    = require("crypto");
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -17,6 +18,43 @@ const PORT = process.env.PORT || 3001;
 const stripe       = new Stripe(process.env.STRIPE_SECRET_KEY);
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const db           = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
+const JWT_SECRET = process.env.JWT_SECRET || "movemycar-secret-change-in-prod";
+
+// Simple JWT implementation without external dependency
+function signToken(payload) {
+  const header = Buffer.from(JSON.stringify({ alg:"HS256", typ:"JWT" })).toString("base64url");
+  const body   = Buffer.from(JSON.stringify({ ...payload, iat: Math.floor(Date.now()/1000) })).toString("base64url");
+  const sig    = crypto.createHmac("sha256", JWT_SECRET).update(`${header}.${body}`).digest("base64url");
+  return `${header}.${body}.${sig}`;
+}
+
+function verifyToken(token) {
+  try {
+    const [header, body, sig] = token.split(".");
+    const expected = crypto.createHmac("sha256", JWT_SECRET).update(`${header}.${body}`).digest("base64url");
+    if (sig !== expected) return null;
+    return JSON.parse(Buffer.from(body, "base64url").toString());
+  } catch { return null; }
+}
+
+function authMiddleware(req, res, next) {
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  if (!token) return res.status(401).json({ error: "Not authenticated" });
+  const payload = verifyToken(token);
+  if (!payload) return res.status(401).json({ error: "Invalid token" });
+  req.userId = payload.userId;
+  req.userTier = payload.tier;
+  next();
+}
+
+// Tier limits
+const TIER_LIMITS = {
+  free:      { searches: 8,    savedSearches: 0,  recentOnMap: 0  },
+  basic:     { searches: 999,  savedSearches: 0,  recentOnMap: 2  },
+  premium:   { searches: Infinity, savedSearches: 0, recentOnMap: 2 },
+  unlimited: { searches: Infinity, savedSearches: 10, recentOnMap: 2 },
+};
 
 app.use(cors({ origin: "*" }));
 app.use("/webhook", express.raw({ type: "application/json" }));
@@ -741,6 +779,158 @@ app.get("/api/asp", async (req, res) => {
   res.json({ suspended: false });
 });
 
+// ─── AUTH ─────────────────────────────────────────────────────────────────────
+// Email signup
+app.post("/auth/signup", async (req, res) => {
+  const { email, password, name } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+  try {
+    const hash = crypto.createHash("sha256").update(password + JWT_SECRET).digest("hex");
+    const { rows } = await db.query(
+      `INSERT INTO users (email, password_hash, name, tier) VALUES ($1, $2, $3, 'free') 
+       ON CONFLICT (email) DO NOTHING RETURNING id, email, name, tier, search_count`,
+      [email.toLowerCase(), hash, name || email.split("@")[0]]
+    );
+    if (!rows.length) return res.status(409).json({ error: "Email already registered" });
+    const user = rows[0];
+    const token = signToken({ userId: user.id, tier: user.tier });
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name, tier: user.tier, searchCount: user.search_count } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Email login
+app.post("/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+  try {
+    const hash = crypto.createHash("sha256").update(password + JWT_SECRET).digest("hex");
+    const { rows } = await db.query(
+      `UPDATE users SET last_seen=NOW() WHERE email=$1 AND password_hash=$2 AND active=true RETURNING id, email, name, tier, search_count`,
+      [email.toLowerCase(), hash]
+    );
+    if (!rows.length) return res.status(401).json({ error: "Invalid email or password" });
+    const user = rows[0];
+    const token = signToken({ userId: user.id, tier: user.tier });
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name, tier: user.tier, searchCount: user.search_count } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Apple Sign In
+app.post("/auth/apple", async (req, res) => {
+  const { appleId, email, name } = req.body;
+  if (!appleId) return res.status(400).json({ error: "Apple ID required" });
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO users (apple_id, email, name, tier) VALUES ($1, $2, $3, 'free')
+       ON CONFLICT (apple_id) DO UPDATE SET last_seen=NOW(), email=COALESCE(EXCLUDED.email, users.email), name=COALESCE(EXCLUDED.name, users.name)
+       RETURNING id, email, name, tier, search_count`,
+      [appleId, email || null, name || "Apple User"]
+    );
+    const user = rows[0];
+    const token = signToken({ userId: user.id, tier: user.tier });
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name, tier: user.tier, searchCount: user.search_count } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Get current user
+app.get("/auth/me", authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      "SELECT id, email, name, tier, search_count FROM users WHERE id=$1",
+      [req.userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found" });
+    res.json({ user: { ...rows[0], searchCount: rows[0].search_count } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Track a search/interaction
+app.post("/auth/track", authMiddleware, async (req, res) => {
+  const { lat, lng, label, locData } = req.body;
+  try {
+    const { rows } = await db.query(
+      `UPDATE users SET search_count=search_count+1, last_seen=NOW() WHERE id=$1 RETURNING search_count, tier`,
+      [req.userId]
+    );
+    const { search_count, tier } = rows[0];
+    const limit = TIER_LIMITS[tier]?.searches || 8;
+    const exceeded = tier === "free" && search_count > limit;
+
+    // Save to recent searches (keep last 2)
+    if (lat && lng) {
+      await db.query(
+        `INSERT INTO recent_searches (user_id, label, lat, lng, loc_data) VALUES ($1,$2,$3,$4,$5)`,
+        [req.userId, label, lat, lng, JSON.stringify(locData || {})]
+      );
+      await db.query(
+        `DELETE FROM recent_searches WHERE user_id=$1 AND id NOT IN (SELECT id FROM recent_searches WHERE user_id=$1 ORDER BY searched_at DESC LIMIT 2)`,
+        [req.userId]
+      );
+    }
+
+    res.json({ searchCount: search_count, exceeded, tier, limit });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Get recent searches (for map pins)
+app.get("/auth/recent", authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT label, lat, lng, loc_data FROM recent_searches WHERE user_id=$1 ORDER BY searched_at DESC LIMIT 2`,
+      [req.userId]
+    );
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── SAVED SEARCHES (Unlimited+Save tier only) ────────────────────────────────
+app.get("/saved-searches", authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT id, label, street, lat, lng, borough, neighborhood, city, loc_data, checked FROM saved_searches WHERE user_id=$1 ORDER BY created_at DESC`,
+      [req.userId]
+    );
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/saved-searches", authMiddleware, async (req, res) => {
+  const { label, street, lat, lng, borough, neighborhood, city, locData } = req.body;
+  try {
+    // Check tier
+    const { rows: user } = await db.query("SELECT tier FROM users WHERE id=$1", [req.userId]);
+    if (user[0]?.tier !== "unlimited") return res.status(403).json({ error: "Upgrade to Unlimited+Save to save searches" });
+    // Check limit
+    const { rows: count } = await db.query("SELECT COUNT(*) FROM saved_searches WHERE user_id=$1", [req.userId]);
+    if (parseInt(count[0].count) >= 10) return res.status(400).json({ error: "Maximum 10 saved searches. Uncheck one to make room." });
+    const { rows } = await db.query(
+      `INSERT INTO saved_searches (user_id, label, street, lat, lng, borough, neighborhood, city, loc_data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [req.userId, label, street, lat, lng, borough, neighborhood, city, JSON.stringify(locData || {})]
+    );
+    res.json(rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch("/saved-searches/:id", authMiddleware, async (req, res) => {
+  const { checked } = req.body;
+  try {
+    await db.query(
+      `UPDATE saved_searches SET checked=$1 WHERE id=$2 AND user_id=$3`,
+      [checked, req.params.id, req.userId]
+    );
+    // Delete unchecked ones (they shouldn't persist)
+    await db.query(`DELETE FROM saved_searches WHERE user_id=$1 AND checked=false`, [req.userId]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/saved-searches/:id", authMiddleware, async (req, res) => {
+  try {
+    await db.query(`DELETE FROM saved_searches WHERE id=$1 AND user_id=$2`, [req.params.id, req.userId]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── SUBSCRIBE ────────────────────────────────────────────────────────────────
 app.post("/subscribe", async (req, res) => {
   const { phone, street, borough, lat, lng } = req.body;
@@ -749,31 +939,71 @@ app.post("/subscribe", async (req, res) => {
   const e164 = digits.startsWith("1") ? `+${digits}` : `+1${digits}`;
   try {
     await db.query(`INSERT INTO subscribers (phone,street,borough,lat,lng) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (phone) DO UPDATE SET street=$2,borough=$3,lat=$4,lng=$5,active=true`, [e164,street.toUpperCase(),borough||"",lat||null,lng||null]);
-    await twilioClient.messages.create({ body:`🚗 Move My Car activated for ${street}! We'll text you before street cleaning, film shoots, and bad weather. Reply STOP to cancel.`, from:process.env.TWILIO_PHONE_NUMBER, to:e164 });
+    await twilioClient.messages.create({ body:`🚗 Street Park Now activated for ${street}! We'll text you before street cleaning, film shoots, and bad weather. Reply STOP to cancel.`, from:process.env.TWILIO_PHONE_NUMBER, to:e164 });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── STRIPE ───────────────────────────────────────────────────────────────────
 app.post("/create-checkout-session", async (req, res) => {
-  const { plan, phone, street } = req.body;
-  const priceId = plan === "annual" ? process.env.STRIPE_PRICE_ANNUAL : process.env.STRIPE_PRICE_MONTHLY;
+  const { plan, userId, email } = req.body;
+  const PRICES = {
+    "basic-monthly":     process.env.STRIPE_PRICE_BASIC_MONTHLY,
+    "basic-annual":      process.env.STRIPE_PRICE_BASIC_ANNUAL,
+    "premium-monthly":   process.env.STRIPE_PRICE_PREMIUM_MONTHLY,
+    "premium-annual":    process.env.STRIPE_PRICE_PREMIUM_ANNUAL,
+    "unlimited-monthly": process.env.STRIPE_PRICE_UNLIMITED_MONTHLY,
+    "unlimited-annual":  process.env.STRIPE_PRICE_UNLIMITED_ANNUAL,
+    // Legacy
+    "monthly": process.env.STRIPE_PRICE_BASIC_MONTHLY,
+    "annual":  process.env.STRIPE_PRICE_BASIC_ANNUAL,
+  };
+  const priceId = PRICES[plan];
+  if (!priceId) return res.status(400).json({ error: "Invalid plan" });
   try {
-    const session = await stripe.checkout.sessions.create({ payment_method_types:["card"], mode:"subscription", line_items:[{ price:priceId, quantity:1 }], metadata:{ phone, street }, success_url:`${process.env.FRONTEND_URL}?subscribed=true`, cancel_url:process.env.FRONTEND_URL, subscription_data:{ trial_period_days:30 } });
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "subscription",
+      line_items: [{ price: priceId, quantity: 1 }],
+      metadata: { userId: userId || "", plan },
+      customer_email: email || undefined,
+      success_url: `${process.env.FRONTEND_URL}?subscribed=true&plan=${plan}`,
+      cancel_url: process.env.FRONTEND_URL,
+    });
     res.json({ url: session.url });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post("/webhook", async (req, res) => {
   let event;
   try { event = stripe.webhooks.constructEvent(req.body, req.headers["stripe-signature"], process.env.STRIPE_WEBHOOK_SECRET); }
   catch (err) { return res.status(400).send(`Webhook Error: ${err.message}`); }
+
   if (event.type === "checkout.session.completed") {
-    await db.query(`UPDATE subscribers SET stripe_customer_id=$1,stripe_subscription_id=$2,plan=$3,active=true WHERE phone=$4`, [event.data.object.customer,event.data.object.subscription,event.data.object.amount_total<500?"monthly":"annual",event.data.object.metadata.phone]).catch(console.error);
+    const session = event.data.object;
+    const { userId, plan } = session.metadata || {};
+    const tier = plan?.includes("unlimited") ? "unlimited" : plan?.includes("premium") ? "premium" : "basic";
+    if (userId) {
+      await db.query(
+        `UPDATE users SET tier=$1, stripe_customer_id=$2, stripe_subscription_id=$3, stripe_price_id=$4 WHERE id=$5`,
+        [tier, session.customer, session.subscription, plan, userId]
+      ).catch(console.error);
+    }
+    // Also update legacy subscribers table
+    await db.query(
+      `UPDATE subscribers SET stripe_customer_id=$1, stripe_subscription_id=$2, plan=$3, active=true WHERE phone=$4`,
+      [session.customer, session.subscription, tier, session.metadata?.phone || ""]
+    ).catch(() => {});
   }
+
   if (event.type === "customer.subscription.deleted") {
-    await db.query("UPDATE subscribers SET active=false WHERE stripe_subscription_id=$1",[event.data.object.id]).catch(console.error);
+    await db.query(
+      `UPDATE users SET tier='free' WHERE stripe_subscription_id=$1`,
+      [event.data.object.id]
+    ).catch(console.error);
+    await db.query("UPDATE subscribers SET active=false WHERE stripe_subscription_id=$1", [event.data.object.id]).catch(console.error);
   }
+
   res.json({ received: true });
 });
 
@@ -802,7 +1032,7 @@ async function sendNightlyAlerts() {
       if ([71,73,75,77,85,86].includes(code)&&snow>0.5) msgs.push(`❄️ Snow tomorrow (${snow.toFixed(1)}"). Move your car early.`);
       else if ([61,63,65,80,81,82].includes(code)&&rain>0.5) msgs.push(`🌧️ Heavy rain tomorrow. Street cleaning may still be enforced.`);
       else if ([95,96,99].includes(code)) msgs.push(`⛈️ Thunderstorms tomorrow. Check parking rules.`);
-      if (msgs.length) await twilioClient.messages.create({ body:`Move My Car — ${tomorrowStr}:\n\n${msgs.join("\n\n")}\n\nReply STOP to cancel.`, from:process.env.TWILIO_PHONE_NUMBER, to:sub.phone });
+      if (msgs.length) await twilioClient.messages.create({ body:`Street Park Now — ${tomorrowStr}:\n\n${msgs.join("\n\n")}\n\nReply STOP to cancel.`, from:process.env.TWILIO_PHONE_NUMBER, to:sub.phone });
     } catch (err) { console.error(`Alert failed for ${sub.phone}:`, err.message); }
     await new Promise(r=>setTimeout(r,150));
   }
@@ -827,8 +1057,46 @@ async function initDB() {
       id SERIAL PRIMARY KEY, subscriber_id INTEGER REFERENCES subscribers(id),
       message TEXT, sent_at TIMESTAMPTZ DEFAULT NOW(), type TEXT
     );
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE,
+      password_hash TEXT,
+      apple_id TEXT UNIQUE,
+      name TEXT,
+      tier TEXT DEFAULT 'free',
+      search_count INTEGER DEFAULT 0,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      stripe_price_id TEXT,
+      active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      last_seen TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS saved_searches (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      street TEXT,
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      borough TEXT,
+      neighborhood TEXT,
+      city TEXT,
+      loc_data JSONB,
+      checked BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS recent_searches (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      label TEXT,
+      lat DOUBLE PRECISION,
+      lng DOUBLE PRECISION,
+      loc_data JSONB,
+      searched_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
   console.log("✅ DB ready");
 }
 
-initDB().then(() => app.listen(PORT, () => console.log(`🚗 Move My Car running on port ${PORT}`)));
+initDB().then(() => app.listen(PORT, () => console.log(`🚗 Street Park Now running on port ${PORT}`)));

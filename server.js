@@ -290,6 +290,8 @@ Portland: pearl district=45.5266,-122.6836 | alberta arts=45.5593,-122.6375 | ha
 Nashville: east nashville=36.1741,-86.7580 | 12 south=36.1201,-86.7970 | germantown=36.1784,-86.7878 | gulch=36.1502,-86.7937 | sylvan park=36.1536,-86.8327 | hillsboro village=36.1354,-86.8038 | belmont=36.1301,-86.7925 | five points=36.1748,-86.7517 | nations=36.1594,-86.8582 | buena vista=36.1653,-86.8046
 Austin: south congress=30.2432,-97.7503 | east austin=30.2589,-97.7202 | north loop=30.3184,-97.7200 | mueller=30.2970,-97.7032 | domain=30.4021,-97.7237 | rainey street=30.2587,-97.7389 | west campus=30.2901,-97.7463 | travis heights=30.2378,-97.7415 | clarksville=30.2795,-97.7614 | cherrywood=30.2784,-97.7220
 Minneapolis: uptown=44.9488,-93.2986 | northeast=44.9940,-93.2561 | north loop=44.9874,-93.2755 | dinkytown=44.9812,-93.2350 | seward=44.9499,-93.2278 | longfellow=44.9287,-93.2213 | south minneapolis=44.9138,-93.2707 | st anthony=44.9830,-93.2474 | powderhorn=44.9265,-93.2557 | linden hills=44.9110,-93.3251
+Dallas: deep ellum=32.7837,-96.7897 | uptown=32.7985,-96.8012 | oak cliff=32.7468,-96.8344 | bishop arts=32.7440,-96.8377 | lower greenville=32.8220,-96.7758 | knox henderson=32.8200,-96.7900 | design district=32.8030,-96.8245 | lakewood=32.8157,-96.7393 | downtown=32.7767,-96.7970 | m streets=32.8278,-96.7706
+Sacramento: midtown=38.5735,-121.4754 | east sacramento=38.5698,-121.4441 | land park=38.5401,-121.4908 | oak park=38.5487,-121.4677 | natomas=38.6280,-121.5000 | downtown=38.5816,-121.4944 | curtis park=38.5395,-121.4820 | fab forties=38.5726,-121.4392 | river district=38.6063,-121.5000 | arden=38.6085,-121.4231
 
 Return the same JSON format as before but include a "city" field in every response.
 For NEIGHBORHOOD type include the city in the label e.g. "Wicker Park, Chicago".
@@ -438,7 +440,7 @@ Return ONLY the array.`, 1000);
     }
   } catch (e) { console.error("Google geocode error:", e.message); }
 
-  res.status(404).json({ error: `Couldn't find "${q}". Try a street name, zip code, or neighborhood in NYC, LA, Chicago, SF, Boston, Philadelphia, DC, Seattle, Miami, Atlanta, Toronto, Denver, Portland, Nashville, Austin, or Minneapolis.` });
+  res.status(404).json({ error: `Couldn't find "${q}". Try a street name, zip code, or neighborhood in NYC, LA, Chicago, SF, Boston, Philadelphia, DC, Seattle, Miami, Atlanta, Toronto, Denver, Portland, Nashville, Austin, Minneapolis, Dallas, or Sacramento.` });
 });
 
 // Reverse geocode — uses Google for accuracy, returns nearby streets sorted by distance

@@ -875,13 +875,81 @@ app.get("/api/events", async (req, res) => {
   const { borough } = req.query;
   const today = new Date().toISOString().split("T")[0];
   const toDate = new Date(); toDate.setDate(toDate.getDate()+14);
+  const toDateStr = toDate.toISOString().split("T")[0];
+
+  const results = new Map();
+
   try {
+    // Source 1: NYC Special Events (tvpp-9vvx) — parades, street fairs, etc.
     const bf = borough ? `%20AND%20upper(borough)%20LIKE%20'%25${encodeURIComponent(borough.toUpperCase())}%25'` : "";
-    const url = `${SOCRATA}/tvpp-9vvx.json?$where=startdate%20>=%20'${today}'%20AND%20startdate%20<=%20'${toDate.toISOString().split("T")[0]}'${bf}&$limit=15&$order=startdate%20ASC`;
-    const r = await fetch(url);
-    if (!r.ok) return res.json([]);
-    res.json((await r.json()).map(ev => ({ name:ev.eventname||ev.name||"City Event", type:ev.eventtype||"Event", start:ev.startdate, location:ev.eventlocation||"", borough:ev.borough||"", parkingImpacted:!!(ev.parkingimpacted) })));
-  } catch { res.json([]); }
+    const url1 = `${SOCRATA}/tvpp-9vvx.json?$where=startdate%20>=%20'${today}'%20AND%20startdate%20<=%20'${toDateStr}'${bf}&$limit=30&$order=startdate%20ASC`;
+    const r1 = await fetch(url1);
+    if (r1.ok) {
+      const data = await r1.json();
+      data.forEach(ev => {
+        const id = ev.uniquekey || ev.eventid || ev.eventname;
+        if (!results.has(id)) results.set(id, {
+          name: ev.eventname || ev.name || "City Event",
+          type: ev.eventtype || "Event",
+          start: ev.startdate,
+          end: ev.enddate,
+          location: ev.eventlocation || ev.streetname || "",
+          borough: ev.borough || "",
+          parkingImpacted: !!(ev.parkingimpacted || ev.street_closure_type)
+        });
+      });
+    }
+  } catch(e) { console.error("Events source 1:", e.message); }
+
+  try {
+    // Source 2: NYC Street Closures (uiay-nctp)
+    const bf2 = borough ? `%20AND%20upper(borough_name)%20LIKE%20'%25${encodeURIComponent(borough.toUpperCase())}%25'` : "";
+    const url2 = `${SOCRATA}/uiay-nctp.json?$where=work_start_date%20>=%20'${today}'%20AND%20work_start_date%20<=%20'${toDateStr}'${bf2}&$limit=20&$order=work_start_date%20ASC`;
+    const r2 = await fetch(url2);
+    if (r2.ok) {
+      const data = await r2.json();
+      data.forEach(ev => {
+        const id = `closure-${ev.objectid || ev.work_order_id}`;
+        if (!results.has(id)) results.set(id, {
+          name: ev.work_order_type || "Street Closure",
+          type: "Street Closure",
+          start: ev.work_start_date?.split("T")[0],
+          end: ev.work_end_date?.split("T")[0],
+          location: `${ev.on_street || ""} ${ev.from_street ? `from ${ev.from_street}` : ""}`.trim(),
+          borough: ev.borough_name || "",
+          parkingImpacted: true
+        });
+      });
+    }
+  } catch(e) { console.error("Events source 2:", e.message); }
+
+  try {
+    // Source 3: NYC Parade permits (from special events dataset filtered by type)
+    const bf3 = borough ? `%20AND%20upper(borough)%20LIKE%20'%25${encodeURIComponent(borough.toUpperCase())}%25'` : "";
+    const url3 = `${SOCRATA}/tvpp-9vvx.json?$where=upper(eventtype)%20LIKE%20'%25PARADE%25'%20AND%20startdate%20>=%20'${today}'${bf3}&$limit=10`;
+    const r3 = await fetch(url3);
+    if (r3.ok) {
+      const data = await r3.json();
+      data.forEach(ev => {
+        const id = `parade-${ev.uniquekey || ev.eventname}`;
+        if (!results.has(id)) results.set(id, {
+          name: ev.eventname || "Parade",
+          type: "Parade",
+          start: ev.startdate,
+          location: ev.eventlocation || "",
+          borough: ev.borough || "",
+          parkingImpacted: true
+        });
+      });
+    }
+  } catch(e) {}
+
+  const all = Array.from(results.values())
+    .filter(e => e.start)
+    .sort((a, b) => new Date(a.start) - new Date(b.start))
+    .slice(0, 20);
+
+  res.json(all);
 });
 
 // ─── WEATHER ──────────────────────────────────────────────────────────────────

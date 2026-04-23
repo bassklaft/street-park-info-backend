@@ -443,7 +443,7 @@ app.get("/api/reverse-geocode", async (req, res) => {
 
   try {
     const GOOGLE_KEY = process.env.GOOGLE_MAPS_KEY;
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_KEY}`;
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_KEY}&region=us&language=en`;
     const r = await fetch(url);
     if (r.ok) {
       const data = await r.json();
@@ -654,15 +654,15 @@ app.get("/api/heatmap", async (req, res) => {
     const GOOGLE_KEY = process.env.GOOGLE_MAPS_KEY;
     const fLat = parseFloat(lat), fLng = parseFloat(lng);
 
-    // Generate grid of points around user location
+    // Use snapToRoads with a grid of points
     const points = [];
-    for (let dlat = -0.006; dlat <= 0.006; dlat += 0.0015) {
-      for (let dlng = -0.006; dlng <= 0.006; dlng += 0.0015) {
+    for (let dlat = -0.005; dlat <= 0.005; dlat += 0.001) {
+      for (let dlng = -0.005; dlng <= 0.005; dlng += 0.001) {
         points.push(`${(fLat+dlat).toFixed(6)},${(fLng+dlng).toFixed(6)}`);
       }
     }
 
-    // Snap points to roads in chunks of 100
+    // Snap to roads
     const chunks = [];
     for (let i = 0; i < points.length; i += 100) chunks.push(points.slice(i, i+100));
 
@@ -671,21 +671,23 @@ app.get("/api/heatmap", async (req, res) => {
       try {
         const url = `https://roads.googleapis.com/v1/snapToRoads?path=${chunk.join("|")}&interpolate=true&key=${GOOGLE_KEY}`;
         const r = await fetch(url);
-        if (!r.ok) return;
+        if (!r.ok) { console.error("snapToRoads:", r.status, await r.text()); return; }
         const d = await r.json();
         (d.snappedPoints || []).forEach(p => {
           const id = p.placeId;
           if (!roadMap.has(id)) roadMap.set(id, []);
           roadMap.get(id).push([p.location.latitude, p.location.longitude]);
         });
-      } catch(e) {}
+      } catch(e) { console.error("snapToRoads error:", e.message); }
     }));
 
+    console.log(`Roads: ${roadMap.size} unique place IDs`);
     if (roadMap.size === 0) return res.json([]);
 
-    // Get street names for each place ID
+    // Get street names — batch geocode place IDs
     const nameMap = new Map();
-    await Promise.all([...roadMap.keys()].slice(0, 30).map(async placeId => {
+    const placeIds = [...roadMap.keys()].slice(0, 25);
+    await Promise.all(placeIds.map(async placeId => {
       try {
         const url = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${placeId}&key=${GOOGLE_KEY}`;
         const r = await fetch(url);
@@ -696,15 +698,16 @@ app.get("/api/heatmap", async (req, res) => {
       } catch(e) {}
     }));
 
-    // Get cleaning schedules for found streets
+    console.log(`Named: ${nameMap.size} streets`);
+
+    // Get cleaning schedules
     const streetNames = [...new Set(nameMap.values())].slice(0, 20);
     let schedules = {};
     if (streetNames.length > 0) {
       try {
         const raw = await askClaude(`Alternate side parking schedules near lat=${lat}, lng=${lng}.
 Streets: ${streetNames.join(", ")}
-Return ONLY JSON object: {"STREET NAME":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}]}
-Return ONLY the JSON:`, 2000);
+Return ONLY JSON: {"STREET NAME":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}]}`, 2000);
         const m = raw.match(/\{[\s\S]*\}/);
         if (m) schedules = JSON.parse(m[0]);
       } catch(e) {}
@@ -742,7 +745,7 @@ Return ONLY the JSON:`, 2000);
       );
     } catch(e) {}
 
-    console.log(`Heatmap: ${result.length} streets via Google Roads`);
+    console.log(`Heatmap: ${result.length} streets`);
     res.json(result);
   } catch(e) { console.error("Heatmap error:", e.message); res.json([]); }
 });

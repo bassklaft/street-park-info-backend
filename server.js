@@ -632,7 +632,7 @@ async function fetchOverpass(query) {
   return null;
 }
 
-// ─── PARKING HEAT MAP — Google Roads API for street geometries ───────────────
+// ─── PARKING HEAT MAP — Claude generates street list, Google geocodes them ────
 app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
@@ -651,96 +651,78 @@ app.get("/api/heatmap", async (req, res) => {
       heatmapCache.set(cacheKey, { data, ts: Date.now() });
       return res.json(data);
     }
-  } catch(e) { console.error("DB cache read:", e.message); }
+  } catch(e) {}
 
   try {
     const GOOGLE_KEY = process.env.GOOGLE_MAPS_KEY;
 
-    // Generate a grid of points around the user to snap to roads
-    const points = [];
-    const step = 0.002; // ~200m
-    for (let dlat = -0.004; dlat <= 0.004; dlat += step) {
-      for (let dlng = -0.004; dlng <= 0.004; dlng += step) {
-        points.push(`${(parseFloat(lat)+dlat).toFixed(6)},${(parseFloat(lng)+dlng).toFixed(6)}`);
-      }
-    }
+    // Ask Claude for nearby streets + their cleaning schedules in one call
+    const raw = await askClaude(`You are a US parking expert. For coordinates lat=${lat}, lng=${lng}:
 
-    // Google Roads snapToRoads — snaps points to nearest roads
-    const chunks = [];
-    for (let i = 0; i < points.length; i += 100) chunks.push(points.slice(i, i+100));
+1. Identify the city and neighborhood
+2. List 15 nearby street names (real streets in that area)
+3. For each street, provide alternate side parking schedule if known
 
-    const roadSegments = new Map();
-    await Promise.all(chunks.map(async chunk => {
-      try {
-        const url = `https://roads.googleapis.com/v1/snapToRoads?path=${chunk.join("|")}&interpolate=true&key=${GOOGLE_KEY}`;
-        const r = await fetch(url);
-        if (!r.ok) return;
-        const d = await r.json();
-        (d.snappedPoints || []).forEach(p => {
-          const name = p.placeId;
-          if (!roadSegments.has(name)) roadSegments.set(name, { placeId: p.placeId, coords: [] });
-          roadSegments.get(name).coords.push([p.location.latitude, p.location.longitude]);
-        });
-      } catch(e) {}
-    }));
+Return ONLY this JSON:
+{
+  "streets": [
+    {"name": "BEDFORD AVENUE", "days": ["Mon","Thu"], "time": "8 AM - 9:30 AM"},
+    {"name": "BERRY STREET", "days": ["Tue","Fri"], "time": "8 AM - 9:30 AM"},
+    {"name": "WYTHE AVENUE", "days": [], "time": ""}
+  ]
+}
+Return ONLY the JSON object.`, 2000);
 
-    // Get street names from place IDs
-    const streetNames = new Map();
-    await Promise.all([...roadSegments.keys()].slice(0, 30).map(async placeId => {
-      try {
-        const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name&key=${GOOGLE_KEY}`;
-        const r = await fetch(url);
-        if (!r.ok) return;
-        const d = await r.json();
-        if (d.result?.name) streetNames.set(placeId, d.result.name.toUpperCase());
-      } catch(e) {}
-    }));
+    let streets = [];
+    try {
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m) streets = JSON.parse(m[0]).streets || [];
+    } catch(e) { console.error("Claude heatmap parse error:", e.message); }
 
-    if (roadSegments.size === 0) {
-      console.error("Google Roads returned no segments");
-      return res.json([]);
-    }
-
-    // Get schedules for street names
-    const uniqueStreets = [...new Set([...streetNames.values()])].slice(0, 20);
-    const schedulesRaw = await askClaude(`Alternate side parking schedules near lat=${lat}, lng=${lng}.
-Streets: ${uniqueStreets.join(", ")}
-Return ONLY JSON: {"STREET NAME":[{"days":["Mon"],"time":"8 AM - 9:30 AM"}]}`, 2000);
-
-    let schedules = {};
-    try { const m = schedulesRaw.match(/\{[\s\S]*\}/); if (m) schedules = JSON.parse(m[0]); } catch(e) {}
+    if (!streets.length) return res.json([]);
 
     const today    = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date().getDay()];
     const tomorrow = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+86400000).getDay()];
     const in2days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+172800000).getDay()];
     const in3days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+259200000).getDay()];
 
-    const result = [...roadSegments.entries()].map(([placeId, seg]) => {
-      const name = streetNames.get(placeId) || "UNKNOWN";
-      const sch = schedules[name] || [];
-      let urgency = sch.length ? "green" : "gray";
-      let nextClean = null;
-      for (const s of sch) {
+    // Geocode each street to get coordinates using Google
+    const result = await Promise.all(streets.map(async (s) => {
+      try {
+        const addr = `${s.name}, near ${lat},${lng}`;
+        const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&location=${lat},${lng}&radius=2000&key=${GOOGLE_KEY}`;
+        const gr = await fetch(gUrl);
+        if (!gr.ok) return null;
+        const gd = await gr.json();
+        if (!gd.results?.[0]) return null;
+        const loc = gd.results[0].geometry.location;
+        // Create a short line segment along the street
+        const coords = [
+          [loc.lat - 0.0005, loc.lng - 0.0005],
+          [loc.lat, loc.lng],
+          [loc.lat + 0.0005, loc.lng + 0.0005],
+        ];
         const days = s.days || [];
-        if (days.includes(today)) { urgency = "red"; nextClean = `Today ${s.time||""}`.trim(); break; }
-        if (days.includes(tomorrow)) { urgency = "red"; nextClean = `Tomorrow ${s.time||""}`.trim(); break; }
-        if (days.includes(in2days) || days.includes(in3days)) {
-          if (urgency !== "red") { urgency = "yellow"; nextClean = `In 2-3 days ${s.time||""}`.trim(); }
-        }
-      }
-      return { street: name, coords: seg.coords, urgency, nextClean };
-    }).filter(s => s.coords.length > 1 && s.street !== "UNKNOWN");
+        let urgency = days.length ? "green" : "gray";
+        let nextClean = null;
+        if (days.includes(today)) { urgency = "red"; nextClean = `Today ${s.time||""}`.trim(); }
+        else if (days.includes(tomorrow)) { urgency = "red"; nextClean = `Tomorrow ${s.time||""}`.trim(); }
+        else if (days.includes(in2days) || days.includes(in3days)) { urgency = "yellow"; nextClean = `In 2-3 days ${s.time||""}`.trim(); }
+        return { street: s.name, coords, urgency, nextClean };
+      } catch(e) { return null; }
+    }));
 
-    heatmapCache.set(cacheKey, { data: result, ts: Date.now() });
+    const filtered = result.filter(Boolean);
+    heatmapCache.set(cacheKey, { data: filtered, ts: Date.now() });
     try {
       await db.query(
         `INSERT INTO heatmap_cache (cache_key, data) VALUES ($1, $2) ON CONFLICT (cache_key) DO UPDATE SET data=$2, updated_at=NOW()`,
-        [cacheKey, JSON.stringify(result)]
+        [cacheKey, JSON.stringify(filtered)]
       );
     } catch(e) {}
 
-    console.log(`Heatmap: ${result.length} road segments via Google Roads`);
-    res.json(result);
+    console.log(`Heatmap: ${filtered.length} streets via Claude+Google`);
+    res.json(filtered);
   } catch(e) { console.error("Heatmap error:", e.message); res.json([]); }
 });
 

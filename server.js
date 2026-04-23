@@ -241,14 +241,14 @@ async function getNeighborhoodStreets(name, lat, lng) {
   const boundaryPromise = (async () => {
     try {
       const boundaryQuery = `[out:json][timeout:20];(relation["boundary"="administrative"]["name"~"${cleanName}",i](around:2000,${lat},${lng});relation["place"~"^(neighbourhood|quarter|suburb|district|city_block)$"]["name"~"${cleanName}",i](around:2000,${lat},${lng}););out ids;`;
-      const br = await fetch('https://overpass-api.de/api/interpreter', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'StreetParkNow/1.0 (streetparknow.vercel.app; contact: support@streetparknow.app)','Accept':'application/json'},body:'data='+encodeURIComponent(boundaryQuery)});
+      const br = await fetch('https://overpass.kumi.systems/api/interpreter', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'StreetParkNow/1.0 (streetparknow.vercel.app; contact: support@streetparknow.app)','Accept':'application/json'},body:'data='+encodeURIComponent(boundaryQuery)});
       if (!br.ok) return [];
       const bd = await br.json();
       const relations = bd.elements || [];
       if (relations.length === 0) return [];
       const relId = relations[0].id;
       const streetsQuery = `[out:json][timeout:25];area(id:${3600000000+relId})->.a;way(area.a)["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
-      const sr = await fetch('https://overpass-api.de/api/interpreter', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'StreetParkNow/1.0 (streetparknow.vercel.app; contact: support@streetparknow.app)','Accept':'application/json'},body:'data='+encodeURIComponent(streetsQuery)});
+      const sr = await fetch('https://overpass.kumi.systems/api/interpreter', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'StreetParkNow/1.0 (streetparknow.vercel.app; contact: support@streetparknow.app)','Accept':'application/json'},body:'data='+encodeURIComponent(streetsQuery)});
       if (!sr.ok) return [];
       const sd = await sr.json();
       return [...new Set((sd.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
@@ -258,7 +258,7 @@ async function getNeighborhoodStreets(name, lat, lng) {
   const radius600Promise = (async () => {
     try {
       const q = `[out:json][timeout:15];way(around:600,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
-      const r = await fetch('https://overpass-api.de/api/interpreter', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'StreetParkNow/1.0 (streetparknow.vercel.app; contact: support@streetparknow.app)','Accept':'application/json'},body:'data='+encodeURIComponent(q)});
+      const r = await fetch('https://overpass.kumi.systems/api/interpreter', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'StreetParkNow/1.0 (streetparknow.vercel.app; contact: support@streetparknow.app)','Accept':'application/json'},body:'data='+encodeURIComponent(q)});
       if (!r.ok) return [];
       const d = await r.json();
       return [...new Set((d.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
@@ -268,7 +268,7 @@ async function getNeighborhoodStreets(name, lat, lng) {
   const radius1200Promise = (async () => {
     try {
       const q = `[out:json][timeout:15];way(around:1200,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
-      const r = await fetch('https://overpass-api.de/api/interpreter', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'StreetParkNow/1.0 (streetparknow.vercel.app; contact: support@streetparknow.app)','Accept':'application/json'},body:'data='+encodeURIComponent(q)});
+      const r = await fetch('https://overpass.kumi.systems/api/interpreter', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','User-Agent':'StreetParkNow/1.0 (streetparknow.vercel.app; contact: support@streetparknow.app)','Accept':'application/json'},body:'data='+encodeURIComponent(q)});
       if (!r.ok) return [];
       const d = await r.json();
       return [...new Set((d.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
@@ -626,9 +626,8 @@ app.get("/api/heatmap", async (req, res) => {
     // Try multiple Overpass endpoints in case one is down
     let data = null;
     for (const endpoint of [
-      "https://overpass-api.de/api/interpreter",
       "https://overpass.kumi.systems/api/interpreter",
-      "https://overpass.openstreetmap.ru/api/interpreter",
+      "https://overpass-api.de/api/interpreter",
     ]) {
       try {
         const r = await fetch(endpoint, { 

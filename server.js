@@ -632,20 +632,25 @@ app.get("/api/cleaning-batch", async (req, res) => {
   const locationCtx = lat && lng ? `near lat ${lat}, lng ${lng}` : `in ${borough || "the city"}`;
 
   try {
-    const text = await askClaude(`You are an NYC alternate side parking expert with deep knowledge of Brooklyn, Manhattan, Queens, Bronx street cleaning schedules.
+    const todayISO = new Date().toISOString().slice(0,10);
+    const text = await askClaude(`You are a US urban parking expert. Today is ${todayISO}. Return weekly posted parking schedules currently in effect for these streets ${locationCtx}.
 
-Location: ${locationCtx} (Brooklyn/Williamsburg/Greenpoint area if in NYC)
-
-Return alternate side parking cleaning schedules for these streets:
+Streets:
 ${streets.map((s, i) => `${i+1}. ${s}`).join("\n")}
 
-IMPORTANT: Many NYC streets have cleaning. Common Williamsburg/Greenpoint schedules:
-- Most residential streets: 1-2 days per week, 8 AM - 9:30 AM or 11 AM - 12:30 PM
-- Avenues: often Mon/Thu or Tue/Fri
-- Do NOT return [] unless you are certain the street has no regulations
+INCLUDE these regimes:
+- NYC / Boston / DC / Philly / Baltimore alternate-side parking (Mon/Thu or Tue/Fri typical)
+- LA / SF / Seattle / Portland / Oakland weekly posted sweeping
+- Chicago residential street cleaning (posted signs, Apr 1 - Nov 30 ONLY — if today's month is Dec-Mar, return [] for Chicago residential)
+- Chicago winter overnight snow routes on arterials (3 AM - 7 AM, Dec 1 - Apr 1 ONLY — use days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"])
+- Toronto weekly cleaning (Apr - Nov only)
 
-Return ONLY a JSON object. Each key = exact street name, value = array of schedule objects.
-{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"East","raw":"NO PARKING 8AM-9:30AM MON & THUR"}],"LEONARD STREET":[{"days":["Tue","Fri"],"time":"8 AM - 9:30 AM","side":"","raw":"NO PARKING 8AM-9:30AM TUES & FRI"}]}
+DO NOT include metered zones, permit-only zones without weekly time windows, or rules out of season. Return [] for highways/private roads or when no rule applies.
+
+Return ONLY a JSON object. Each key = exact street name from the list above, value = array of schedule objects.
+
+Example:
+{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"East","raw":"NO PARKING 8AM-9:30AM MON & THUR"}],"SOUTH MICHIGAN AVENUE":[{"days":["Tue"],"time":"9 AM - 12 PM","side":"","raw":"STREET CLEANING TUE 9AM-12PM"}]}
 
 Return ONLY the JSON object starting with {:`, 3000);
 
@@ -738,7 +743,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v3:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v4:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -765,17 +770,31 @@ app.get("/api/heatmap", async (req, res) => {
     const streetNames = [...new Set(ways.map(w => normStreet(w.tags.name)))].slice(0, 80);
     if (!streetNames.length) return res.json([]);
 
-    const schedulesRaw = await askClaude(`You are an NYC alternate side parking expert. For each street near lat=${lat}, lng=${lng}, give the current street cleaning / alt-side parking schedule.
+    const todayISO = new Date().toISOString().slice(0,10);
+    const schedulesRaw = await askClaude(`You are a US urban parking expert. Today is ${todayISO}. For each street near lat=${lat}, lng=${lng}, list any weekly posted parking rule currently in effect that requires moving a car.
 
 Streets (names are in canonical UPPERCASE with full words — "AVENUE" not "AVE"):
 ${streetNames.map((s,i) => `${i+1}. ${s}`).join("\n")}
 
-Return ONLY a raw JSON object (no prose, no markdown fences). Use the EXACT street name from the numbered list above as each key, in UPPERCASE. Value = array of schedules. Use an empty array [] only if the street truly has no alt-side rules (e.g. highways, private roads). Most residential NYC streets DO have alt-side cleaning — include what you know.
+Return ONLY a raw JSON object (no prose, no markdown fences). Use the EXACT street name from the numbered list above as each key, in UPPERCASE. Value = array of weekly schedules currently in effect.
+
+INCLUDE these regimes (all expressed as weekly days + time window):
+- NYC / Boston / DC / Philly / Baltimore alternate-side parking
+- LA / SF / Seattle / Portland / Oakland posted weekly street sweeping
+- Chicago residential street cleaning (posted signs, typically seasonal Apr 1 - Nov 30 — do NOT include if today's month is Dec, Jan, Feb, or Mar)
+- Chicago winter overnight snow routes on arterials (3 AM - 7 AM, only Dec 1 - Apr 1 — use days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], time="3 AM - 7 AM")
+- Toronto weekly cleaning (seasonal Apr - Nov, same seasonal filter as Chicago)
+
+DO NOT INCLUDE:
+- Metered / pay-by-hour zones (payment-based, not schedule-based)
+- Residential permit zones with no time window (permit-only, continuous enforcement)
+- Highways, interstates, private roads → return []
+- Rules not currently in season
 
 Days must be 3-letter abbreviations: Mon Tue Wed Thu Fri Sat Sun.
 
-Example:
-{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],"BERRY STREET":[{"days":["Tue","Fri"],"time":"11:30 AM - 1 PM"}],"BROOKLYN QUEENS EXPRESSWAY":[]}
+Examples:
+{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],"SOUTH MICHIGAN AVENUE":[{"days":["Tue"],"time":"9 AM - 12 PM"}],"VIRGIL AVENUE":[{"days":["Wed"],"time":"10 AM - 12 PM"}],"LAKE SHORE DRIVE":[]}
 
 Return ONLY the JSON object:`, 3000);
 

@@ -1200,3 +1200,4 @@ async function initDB() {
 }
 
 initDB().then(() => app.listen(PORT, () => console.log(`🚗 Street Park Now running on port ${PORT}`)));
+

@@ -726,7 +726,7 @@ app.get("/api/heatmap", async (req, res) => {
   } catch(e) {}
 
   try {
-    const overpassQuery = `[out:json][timeout:20];way(around:500,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street)$"]["name"];out geom;`;
+    const overpassQuery = `[out:json][timeout:25];way(around:1000,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street)$"]["name"];out geom;`;
     const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`, {
       headers: { "User-Agent": "StreetParkNow/1.0 (streetparknow.vercel.app)" }
     });

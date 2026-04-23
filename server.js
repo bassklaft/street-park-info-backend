@@ -119,6 +119,134 @@ function normStreet(s) {
     .trim();
 }
 
+// ─── CHICAGO STREET SWEEPING (real city data) ───────────────────────────────
+// Pulls the official 2026 zone polygons + per-month dates from the Chicago
+// data portal (dataset 2r7q-emq3). Each zone is a ward section; the month
+// fields hold comma-separated day numbers (e.g. april: "1,2,23,24").
+const CHICAGO_ZONES_URL = "https://data.cityofchicago.org/resource/2r7q-emq3.json?$limit=2000";
+const CHICAGO_MONTH_FIELDS = { april:4, may:5, june:6, july:7, august:8, september:9, october:10, november:11 };
+const CHICAGO_BBOX = { minLat: 41.60, maxLat: 42.10, minLng: -87.95, maxLng: -87.52 };
+let _chicagoZonesCache = null;
+let _chicagoZonesTs = 0;
+const CHICAGO_ZONES_TTL = 7 * 24 * 3600 * 1000;
+
+function isChicago(lat, lng) {
+  return lat >= CHICAGO_BBOX.minLat && lat <= CHICAGO_BBOX.maxLat &&
+         lng >= CHICAGO_BBOX.minLng && lng <= CHICAGO_BBOX.maxLng;
+}
+
+function pointInRing(lng, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersect = ((yi > lat) !== (yj > lat)) &&
+      (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInMultiPolygon(lng, lat, geom) {
+  if (!geom || geom.type !== "MultiPolygon" || !Array.isArray(geom.coordinates)) return false;
+  for (const polygon of geom.coordinates) {
+    if (!polygon.length) continue;
+    if (!pointInRing(lng, lat, polygon[0])) continue;
+    let inHole = false;
+    for (let i = 1; i < polygon.length; i++) {
+      if (pointInRing(lng, lat, polygon[i])) { inHole = true; break; }
+    }
+    if (!inHole) return true;
+  }
+  return false;
+}
+
+function zoneDates(zone, year) {
+  const out = [];
+  for (const [field, monthIdx] of Object.entries(CHICAGO_MONTH_FIELDS)) {
+    const raw = zone[field];
+    if (!raw) continue;
+    for (const token of String(raw).split(",")) {
+      const day = parseInt(token.trim(), 10);
+      if (day >= 1 && day <= 31) {
+        out.push(new Date(year, monthIdx - 1, day));
+      }
+    }
+  }
+  out.sort((a, b) => a - b);
+  return out;
+}
+
+async function loadChicagoZones() {
+  if (_chicagoZonesCache && Date.now() - _chicagoZonesTs < CHICAGO_ZONES_TTL) {
+    return _chicagoZonesCache;
+  }
+  try {
+    const r = await fetch(CHICAGO_ZONES_URL);
+    if (!r.ok) throw new Error(`status ${r.status}`);
+    const raw = await r.json();
+    const year = new Date().getFullYear();
+    const zones = raw.map(z => {
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      const geom = z.the_geom;
+      if (geom?.coordinates) {
+        for (const poly of geom.coordinates) {
+          for (const ring of poly) {
+            for (const [lng, lat] of ring) {
+              if (lat < minLat) minLat = lat;
+              if (lat > maxLat) maxLat = lat;
+              if (lng < minLng) minLng = lng;
+              if (lng > maxLng) maxLng = lng;
+            }
+          }
+        }
+      }
+      return {
+        ward_section: z.ward_section,
+        ward: z.ward,
+        section: z.section,
+        geom,
+        dates: zoneDates(z, year),
+        bbox: { minLat, maxLat, minLng, maxLng },
+      };
+    });
+    _chicagoZonesCache = zones;
+    _chicagoZonesTs = Date.now();
+    console.log(`Chicago zones loaded: ${zones.length} zones`);
+  } catch (e) {
+    console.error("Chicago zones load failed:", e.message);
+    if (!_chicagoZonesCache) _chicagoZonesCache = [];
+  }
+  return _chicagoZonesCache;
+}
+
+function findChicagoZone(lat, lng, zones) {
+  for (const zone of zones) {
+    const { minLat, maxLat, minLng, maxLng } = zone.bbox;
+    if (lat < minLat || lat > maxLat || lng < minLng || lng > maxLng) continue;
+    if (pointInMultiPolygon(lng, lat, zone.geom)) return zone;
+  }
+  return null;
+}
+
+function chicagoUrgency(nextDate, today) {
+  if (!nextDate) return "gray";
+  const daysAway = Math.floor((nextDate - today) / 86400000);
+  if (daysAway < 0) return "gray";
+  if (daysAway <= 1) return "red";
+  if (daysAway <= 3) return "yellow";
+  return "green";
+}
+
+function chicagoNextCleanLabel(nextDate, today) {
+  if (!nextDate) return null;
+  const daysAway = Math.floor((nextDate - today) / 86400000);
+  const human = nextDate.toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" });
+  if (daysAway === 0) return `Today (${human}) 9 AM - 2 PM`;
+  if (daysAway === 1) return `Tomorrow (${human}) 9 AM - 2 PM`;
+  return `${human} (in ${daysAway} days) 9 AM - 2 PM`;
+}
+
 function parseSignText(text) {
   if (!text) return null;
   const upper = text.toUpperCase();
@@ -631,6 +759,38 @@ app.get("/api/cleaning-batch", async (req, res) => {
   const streets = streetsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 30);
   const locationCtx = lat && lng ? `near lat ${lat}, lng ${lng}` : `in ${borough || "the city"}`;
 
+  // Chicago branch: use real city data. Find the ward-section for the
+  // center point, and apply its scheduled dates to each street in the batch.
+  // (Single-zone approximation — streets crossing a ward-section boundary
+  // will get the center's zone schedule. Close enough for the common case
+  // where a search surfaces streets in the same neighborhood.)
+  if (lat && lng && isChicago(+lat, +lng)) {
+    try {
+      const zones = await loadChicagoZones();
+      const zone = findChicagoZone(+lat, +lng, zones);
+      if (zone && zone.dates.length) {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const upcoming = zone.dates.filter(d => d >= today);
+        if (upcoming.length) {
+          const DAY_ABBR = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+          const upcomingLabels = upcoming.slice(0, 6).map(d =>
+            d.toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" })
+          );
+          const entry = [{
+            days: [DAY_ABBR[upcoming[0].getDay()]],
+            time: "9 AM - 2 PM",
+            side: "",
+            raw: `Chicago Ward ${zone.ward} Sec ${zone.section} street sweeping — check posted signs for exact hours`,
+            upcomingDates: upcomingLabels,
+          }];
+          const result = {};
+          for (const s of streets) result[s] = entry;
+          return res.json(result);
+        }
+      }
+    } catch (e) { console.error("Chicago cleaning-batch error:", e.message); }
+  }
+
   try {
     const todayISO = new Date().toISOString().slice(0,10);
     const text = await askClaude(`You are a US urban parking expert. Today is ${todayISO}. Return weekly posted parking schedules currently in effect for these streets ${locationCtx}.
@@ -743,7 +903,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v4:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v5:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -769,6 +929,40 @@ app.get("/api/heatmap", async (req, res) => {
 
     const streetNames = [...new Set(ways.map(w => normStreet(w.tags.name)))].slice(0, 80);
     if (!streetNames.length) return res.json([]);
+
+    // Chicago branch: use real city data (zone polygons + scheduled dates)
+    // instead of asking Claude. Every residential way that falls inside a
+    // ward-section zone gets classified by its next scheduled sweep date.
+    if (isChicago(+lat, +lng)) {
+      const zones = await loadChicagoZones();
+      if (zones.length) {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const result = ways.map(w => {
+          const mid = w.geometry[Math.floor(w.geometry.length / 2)];
+          const zone = findChicagoZone(mid.lat, mid.lon, zones);
+          const coords = w.geometry.map(p => [p.lat, p.lon]);
+          const name = normStreet(w.tags.name);
+          if (!zone) return { street: name, coords, urgency: "gray", nextClean: null };
+          const nextDate = zone.dates.find(d => d >= today);
+          return {
+            street: name,
+            coords,
+            urgency: chicagoUrgency(nextDate, today),
+            nextClean: chicagoNextCleanLabel(nextDate, today),
+          };
+        });
+        heatmapCache.set(cacheKey, { data: result, ts: Date.now() });
+        try {
+          await db.query(
+            `INSERT INTO heatmap_cache (cache_key, data) VALUES ($1, $2) ON CONFLICT (cache_key) DO UPDATE SET data=$2, updated_at=NOW()`,
+            [cacheKey, JSON.stringify(result)]
+          );
+        } catch(e) {}
+        const nonGray = result.filter(r => r.urgency !== "gray").length;
+        console.log(`Chicago heatmap: ${result.length} ways, ${nonGray} classified via real data`);
+        return res.json(result);
+      }
+    }
 
     const todayISO = new Date().toISOString().slice(0,10);
     const schedulesRaw = await askClaude(`You are a US urban parking expert. Today is ${todayISO}. For each street near lat=${lat}, lng=${lng}, list any weekly posted parking rule currently in effect that requires moving a car.

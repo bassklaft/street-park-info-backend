@@ -72,7 +72,7 @@ async function askClaude(prompt, maxTokens = 1500) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-opus-4-5",
+      model: "claude-sonnet-4-5",
       max_tokens: maxTokens,
       messages: [{ role: "user", content: prompt }],
     }),
@@ -705,9 +705,14 @@ app.get("/api/heatmap", async (req, res) => {
     let schedules = {};
     if (streetNames.length > 0) {
       try {
-        const raw = await askClaude(`Alternate side parking schedules near lat=${lat}, lng=${lng}.
-Streets: ${streetNames.join(", ")}
-Return ONLY JSON: {"STREET NAME":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}]}`, 2000);
+        const raw = await askClaude(`You are a US alternate side parking expert. Location: lat=${lat}, lng=${lng}.
+
+Identify the city/neighborhood from these coordinates, then provide alternate side parking schedules for these streets:
+${streetNames.map((s,i) => `${i+1}. ${s}`).join("\n")}
+
+Return ONLY a JSON object. Key = street name in CAPS, value = array of schedule objects (empty array if no restrictions known).
+Example: {"WYTHE AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],"BEDFORD AVENUE":[{"days":["Tue","Fri"],"time":"8 AM - 9:30 AM"}]}
+Return ONLY the JSON object starting with {:`, 2000);
         const m = raw.match(/\{[\s\S]*\}/);
         if (m) schedules = JSON.parse(m[0]);
       } catch(e) {}

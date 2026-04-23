@@ -605,15 +605,20 @@ app.get("/api/cleaning-batch", async (req, res) => {
   const locationCtx = lat && lng ? `near lat ${lat}, lng ${lng}` : `in ${borough || "the city"}`;
 
   try {
-    const text = await askClaude(`You are a US alternate side parking expert covering NYC, LA, Chicago, SF, Boston, Philadelphia, DC, and Seattle. Return cleaning schedules for ALL these streets ${locationCtx}:
+    const text = await askClaude(`You are an NYC alternate side parking expert with deep knowledge of Brooklyn, Manhattan, Queens, Bronx street cleaning schedules.
 
+Location: ${locationCtx} (Brooklyn/Williamsburg/Greenpoint area if in NYC)
+
+Return alternate side parking cleaning schedules for these streets:
 ${streets.map((s, i) => `${i+1}. ${s}`).join("\n")}
 
-Determine the city from coordinates or context, then return accurate schedules.
-Return ONLY a JSON object where each key is the EXACT street name and value is an array of schedules.
-If unknown use [].
+IMPORTANT: Many NYC streets have cleaning. Common Williamsburg/Greenpoint schedules:
+- Most residential streets: 1-2 days per week, 8 AM - 9:30 AM or 11 AM - 12:30 PM
+- Avenues: often Mon/Thu or Tue/Fri
+- Do NOT return [] unless you are certain the street has no regulations
 
-{"BEDFORD AVENUE": [{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"","raw":"NO PARKING 8AM-9:30AM MON & THUR"}], "BERRY STREET": []}
+Return ONLY a JSON object. Each key = exact street name, value = array of schedule objects.
+{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM","side":"East","raw":"NO PARKING 8AM-9:30AM MON & THUR"}],"LEONARD STREET":[{"days":["Tue","Fri"],"time":"8 AM - 9:30 AM","side":"","raw":"NO PARKING 8AM-9:30AM TUES & FRI"}]}
 
 Return ONLY the JSON object starting with {:`, 3000);
 

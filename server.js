@@ -223,47 +223,54 @@ async function getNeighborhoodStreets(name, lat, lng) {
 
   if (!lat || !lng) return [];
 
-  // 2. Try OSM boundary relation lookup — gets exact neighborhood polygon
-  try {
-    const cleanName = name.replace(/"/g,"").replace(/the /gi,"").replace(/\bSF\b/gi,"San Francisco").trim();
-    const boundaryQuery = `[out:json][timeout:20];(relation["boundary"="administrative"]["name"~"${cleanName}",i](around:2000,${lat},${lng});relation["place"~"^(neighbourhood|quarter|suburb|district|city_block)$"]["name"~"${cleanName}",i](around:2000,${lat},${lng}););out ids;`;
-    const br = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(boundaryQuery)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
-    if (br.ok) {
+  // 2. Fire boundary lookup AND radius lookups simultaneously — take best result
+  const cleanName = name.replace(/"/g,"").replace(/^the /i,"").replace(/\bSF\b/gi,"San Francisco").trim();
+
+  const boundaryPromise = (async () => {
+    try {
+      const boundaryQuery = `[out:json][timeout:20];(relation["boundary"="administrative"]["name"~"${cleanName}",i](around:2000,${lat},${lng});relation["place"~"^(neighbourhood|quarter|suburb|district|city_block)$"]["name"~"${cleanName}",i](around:2000,${lat},${lng}););out ids;`;
+      const br = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(boundaryQuery)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
+      if (!br.ok) return [];
       const bd = await br.json();
       const relations = bd.elements || [];
-      if (relations.length > 0) {
-        const relId = relations[0].id;
-        const streetsQuery = `[out:json][timeout:25];area(id:${3600000000+relId})->.a;way(area.a)["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
-        const sr = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(streetsQuery)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
-        if (sr.ok) {
-          const sd = await sr.json();
-          const streets = [...new Set((sd.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
-          if (streets.length >= 3) {
-            console.log(`OSM boundary for "${name}": ${streets.length} streets`);
-            return streets;
-          }
-        }
-      }
-    }
-  } catch(e) { console.error("OSM boundary error:", e.message); }
+      if (relations.length === 0) return [];
+      const relId = relations[0].id;
+      const streetsQuery = `[out:json][timeout:25];area(id:${3600000000+relId})->.a;way(area.a)["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
+      const sr = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(streetsQuery)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
+      if (!sr.ok) return [];
+      const sd = await sr.json();
+      return [...new Set((sd.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
+    } catch(e) { return []; }
+  })();
 
-  // 3. Radius fallback with progressive expansion — 600m → 900m → 1200m
-  for (const radius of [600, 900, 1200]) {
+  const radius600Promise = (async () => {
     try {
-      const q = `[out:json][timeout:20];way(around:${radius},${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
+      const q = `[out:json][timeout:15];way(around:600,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
       const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
-      if (r.ok) {
-        const d = await r.json();
-        const streets = [...new Set((d.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
-        if (streets.length >= 3) {
-          console.log(`OSM radius ${radius}m for "${name}": ${streets.length} streets`);
-          return streets;
-        }
-      }
-    } catch(e) { console.error(`OSM radius ${radius} error:`, e.message); }
-  }
+      if (!r.ok) return [];
+      const d = await r.json();
+      return [...new Set((d.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
+    } catch(e) { return []; }
+  })();
 
-  return [];
+  const radius1200Promise = (async () => {
+    try {
+      const q = `[out:json][timeout:15];way(around:1200,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
+      const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
+      if (!r.ok) return [];
+      const d = await r.json();
+      return [...new Set((d.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
+    } catch(e) { return []; }
+  })();
+
+  // Race all three — return first one with 3+ streets
+  const [boundary, radius600, radius1200] = await Promise.all([boundaryPromise, radius600Promise, radius1200Promise]);
+
+  if (boundary.length >= 3) { console.log(`OSM boundary for "${name}": ${boundary.length} streets`); return boundary; }
+  if (radius600.length >= 3) { console.log(`OSM radius 600 for "${name}": ${radius600.length} streets`); return radius600; }
+  if (radius1200.length >= 3) { console.log(`OSM radius 1200 for "${name}": ${radius1200.length} streets`); return radius1200; }
+
+  return boundary.length ? boundary : radius600.length ? radius600 : radius1200;
 }
 
 // ─── SMART GEOCODE ────────────────────────────────────────────────────────────

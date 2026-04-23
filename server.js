@@ -138,6 +138,11 @@ const NEIGHBORHOOD_STREETS = {
   // NYC - Queens
   "astoria": ["21 STREET","23 STREET","29 STREET","31 STREET","33 STREET","35 STREET","36 AVENUE","37 AVENUE","38 AVENUE","ASTORIA BOULEVARD","BROADWAY","DITMARS BOULEVARD","HOYT AVENUE NORTH","HOYT AVENUE SOUTH","NEWTOWN AVENUE","NORTHERN BOULEVARD","STEINWAY STREET","VERMONT PLACE"],
   "long island city": ["21 STREET","22 STREET","23 STREET","24 STREET","44 DRIVE","44 ROAD","45 AVENUE","45 ROAD","46 AVENUE","47 AVENUE","48 AVENUE","BORDEN AVENUE","COURT SQUARE","DAVIS STREET","DUTCH KILLS STREET","JACKSON AVENUE","NORTHERN BOULEVARD","PURVES STREET","QUEENS BOULEVARD","QUEENS PLAZA NORTH","QUEENS PLAZA SOUTH","SKILLMAN AVENUE","THOMPSON AVENUE","THOMSON AVENUE","VERNON BOULEVARD","VAN DAM STREET","WATER STREET","YOUNG STREET"],
+  "court square": ["21 STREET","23 STREET","44 DRIVE","44 ROAD","45 AVENUE","45 ROAD","BORDEN AVENUE","COURT SQUARE","DAVIS STREET","JACKSON AVENUE","PURVES STREET","QUEENS PLAZA NORTH","QUEENS PLAZA SOUTH","SKILLMAN AVENUE","THOMPSON AVENUE","THOMSON AVENUE","VAN DAM STREET","YOUNG STREET"],
+  "hunters point": ["BORDEN AVENUE","CENTER BOULEVARD","COURT SQUARE","DAVIS STREET","DUTCH KILLS STREET","HUNTERS POINT AVENUE","JACKSON AVENUE","WATER STREET","VERNON BOULEVARD","VAN DAM STREET","45 AVENUE","45 ROAD","46 AVENUE","47 AVENUE","48 AVENUE","2 STREET","5 STREET","11 STREET"],
+  "vernon jackson": ["JACKSON AVENUE","VERNON BOULEVARD","PURVES STREET","QUEENS PLAZA NORTH","QUEENS PLAZA SOUTH","44 DRIVE","44 ROAD","45 AVENUE","23 STREET","21 STREET","SKILLMAN AVENUE","THOMSON AVENUE"],
+  "dutch kills": ["DUTCH KILLS STREET","JACKSON AVENUE","NORTHERN BOULEVARD","QUEENS PLAZA NORTH","SKILLMAN AVENUE","37 AVENUE","38 AVENUE","39 AVENUE","40 ROAD","41 AVENUE","CRESCENT STREET","QUEENSBORO PLAZA"],
+  "queensboro plaza": ["JACKSON AVENUE","NORTHERN BOULEVARD","QUEENS PLAZA NORTH","QUEENS PLAZA SOUTH","QUEENSBORO BRIDGE","21 STREET","BRIDGE PLAZA NORTH","BRIDGE PLAZA SOUTH"],
   "flushing": ["BOWNE STREET","CHERRY AVENUE","COLLEGE POINT BOULEVARD","ELM AVENUE","FRANKLIN AVENUE","GERANIUM AVENUE","HOLLY AVENUE","KISSENA BOULEVARD","LINDEN PLACE","MAIN STREET","MAPLE AVENUE","MURRAY STREET","NORTHERN BOULEVARD","PARSONS BOULEVARD","PRINCE STREET","PSUEDO PLACE","ROSE AVENUE","SANFORD AVENUE","UNION STREET","UTOPIA PARKWAY","VLEIGH PLACE","WHITESTONE EXPRESSWAY"],
   "jackson heights": ["34 AVENUE","35 AVENUE","37 AVENUE","74 STREET","75 STREET","76 STREET","77 STREET","78 STREET","79 STREET","80 STREET","81 STREET","82 STREET","83 STREET","84 STREET","85 STREET","86 STREET","JUNCTION BOULEVARD","NATIONAL STREET","NORTHERN BOULEVARD","QUEENS BOULEVARD","ROOSEVELT AVENUE"],
   // NYC - Bronx
@@ -178,38 +183,84 @@ const NEIGHBORHOOD_STREETS = {
   "capitol hill": ["10 AVENUE","11 AVENUE","12 AVENUE","13 AVENUE","14 AVENUE","15 AVENUE","BELLEVUE AVENUE","BOYLSTON AVENUE","BROADWAY","DENNY WAY","E DENNY WAY","E JOHN STREET","E MADISON STREET","E OLIVE WAY","E PIKE STREET","E PINE STREET","E ROY STREET","E SPRING STREET","E UNION STREET","EASTLAKE AVENUE","HARVARD AVENUE","LAKEVIEW BOULEVARD","MELROSE AVENUE","REPUBLICAN STREET","SUMMIT AVENUE","TERRY AVENUE","THOMAS STREET","YALE AVENUE"],
   "fremont": ["1 AVENUE N","2 AVENUE N","3 AVENUE N","4 AVENUE N","34 STREET","35 STREET","36 STREET","37 STREET","38 STREET","39 STREET","40 STREET","41 STREET","AURORA AVENUE N","BURKE AVENUE N","DAYTON AVENUE N","DEXTER AVENUE N","EVANSTON AVENUE N","FREMONT AVENUE N","FREMONT PLACE N","GREENWOOD AVENUE N","INTERLAKE AVENUE N","LINDEN AVENUE N","MERIDIAN AVENUE N","N 34 STREET","N 36 STREET","PALATINE AVENUE N","PHINNEY AVENUE N","STONE WAY N","WOODLAND PARK AVENUE N"],
   "ballard": ["14 AVENUE NW","15 AVENUE NW","17 AVENUE NW","20 AVENUE NW","22 AVENUE NW","24 AVENUE NW","28 AVENUE NW","32 AVENUE NW","56 STREET NW","57 STREET NW","58 STREET NW","59 STREET NW","60 STREET NW","65 STREET NW","MARKET STREET","NW 56 STREET","NW 57 STREET","NW 58 STREET","NW 65 STREET","SHILSHOLE AVENUE NW","SLOOP STREET","STONEWAY N"],
+  // New Jersey
+  "hoboken": ["1 STREET","2 STREET","3 STREET","4 STREET","5 STREET","6 STREET","7 STREET","8 STREET","9 STREET","10 STREET","11 STREET","12 STREET","13 STREET","14 STREET","ADAMS STREET","BLOOMFIELD STREET","CLINTON STREET","GARDEN STREET","GRAND STREET","HUDSON STREET","JEFFERSON STREET","MADISON STREET","MONROE STREET","OBSERVER HIGHWAY","PARK AVENUE","WASHINGTON STREET"],
+  "journal square": ["BERGEN AVENUE","BRAMHALL AVENUE","COMMUNIPAW AVENUE","JOURNAL SQUARE","KENNEDY BOULEVARD","NEWKIRK STREET","SIP AVENUE","SUMMIT AVENUE","WESTSIDE AVENUE"],
+  "jersey city heights": ["CENTRAL AVENUE","COLUMBIA AVENUE","GARRISON AVENUE","MANHATTAN AVENUE","NEW YORK AVENUE","NORTH STREET","PALISADE AVENUE","SUMMIT AVENUE"],
+  "downtown jersey city": ["BAY STREET","CHRISTOPHER COLUMBUS DRIVE","ERIE STREET","EXCHANGE PLACE","GRAND STREET","GROVE STREET","HENDERSON STREET","HUDSON STREET","MARIN BOULEVARD","MONTGOMERY STREET","MORGAN STREET","NEWARK AVENUE","PACIFIC AVENUE","PAVONIA AVENUE","WAYNE STREET"],
+  // San Diego
+  "north park san diego": ["30TH STREET","ADAMS AVENUE","BOUNDARY STREET","EL CAJON BOULEVARD","MADISON AVENUE","MEADE AVENUE","NORTH PARK WAY","OREGON STREET","POLK AVENUE","RAY STREET","UNIVERSITY AVENUE","UPAS STREET","UTAH STREET"],
+  "north park": ["30TH STREET","ADAMS AVENUE","BOUNDARY STREET","EL CAJON BOULEVARD","MADISON AVENUE","MEADE AVENUE","NORTH PARK WAY","OREGON STREET","POLK AVENUE","RAY STREET","UNIVERSITY AVENUE","UPAS STREET","UTAH STREET"],
+  "hillcrest": ["4TH AVENUE","5TH AVENUE","6TH AVENUE","BROOKES AVENUE","CLEVELAND AVENUE","HARVEY MILK STREET","LINCOLN AVENUE","ROBINSON AVENUE","UNIVERSITY AVENUE","WASHINGTON STREET","OHIO STREET","MICHIGAN STREET"],
+  "ocean beach": ["ABBOTT STREET","BACON STREET","CABLE STREET","CAPE MAY AVENUE","CHATSWORTH BOULEVARD","DOG BEACH","FROUDE STREET","NIAGARA AVENUE","NEWPORT AVENUE","SUNSET CLIFFS BOULEVARD","VOLTAIRE STREET","WEST POINT LOMA BOULEVARD"],
+  "pacific beach": ["BAYARD STREET","CASS STREET","CHALCEDONY STREET","DIAMOND STREET","EMERALD STREET","FANUEL STREET","GARNET AVENUE","GRAND AVENUE","INGRAHAM STREET","LAMONT STREET","MISSION BOULEVARD","OLIVER AVENUE","PACIFIC BEACH DRIVE","THOMAS AVENUE","TURQUOISE STREET"],
+  "mission beach": ["BAYSIDE WALK","MISSION BOULEVARD","OCEAN FRONT WALK","SANTA CLARA PLACE","VENTURA PLACE","WAVE STREET"],
+  "la jolla": ["COAST BOULEVARD","DRAPER AVENUE","FERN GLEN","GIRARD AVENUE","HERSCHEL AVENUE","IVANHOE AVENUE","KLINE STREET","LA JOLLA BOULEVARD","NAUTILUS STREET","PROSPECT STREET","SILVERADO STREET","TORREY PINES ROAD","WALL STREET"],
+  "gaslamp quarter": ["4TH AVENUE","5TH AVENUE","6TH AVENUE","BROADWAY","F STREET","G STREET","HARBOR DRIVE","ISLAND AVENUE","J STREET","K STREET","L STREET","MARKET STREET"],
+  "little italy san diego": ["ASH STREET","BEECH STREET","CEDAR STREET","DATE STREET","GRAPE STREET","HAWTHORN STREET","INDIA STREET","KETTNER BOULEVARD","LAUREL STREET","UNION STREET","W BROADWAY"],
+  "east village san diego": ["10TH AVENUE","11TH AVENUE","12TH AVENUE","13TH STREET","14TH STREET","15TH STREET","16TH STREET","BROADWAY","F STREET","G STREET","IMPERIAL AVENUE","J STREET","K STREET","L STREET","MARKET STREET","NEWTON AVENUE","PARK BOULEVARD"],
+  "south park san diego": ["28TH STREET","29TH STREET","30TH STREET","BEECH STREET","CEDAR STREET","ELM STREET","FERN STREET","GRAPE STREET","IVY STREET","JUNIPER STREET","KALMIA STREET","LAUREL STREET"],
 };
 
 function lookupNeighborhoodStreets(name) {
   const key = name.toLowerCase().trim()
-    .replace(/,?\s*(brooklyn|manhattan|queens|bronx|staten island|chicago|los angeles|la|san francisco|sf|boston|philadelphia|philly|washington dc|dc|seattle|new york|nyc|ny)\s*$/i, "")
+    .replace(/,?\s*(brooklyn|manhattan|queens|bronx|staten island|chicago|los angeles|la|san francisco|sf|boston|philadelphia|philly|washington dc|dc|seattle|new york|nyc|ny|new jersey|nj|hoboken|jersey city|newark)\s*$/i, "")
     .trim();
   return NEIGHBORHOOD_STREETS[key] || null;
 }
 
-// ─── GET STREETS FOR A NEIGHBORHOOD ──────────────────────────────────────────
-async function getNeighborhoodStreets(neighborhoodName, lat, lng) {
-  // First check hardcoded catalog — instant and reliable
-  const hardcoded = lookupNeighborhoodStreets(neighborhoodName);
-  if (hardcoded) {
-    console.log(`Catalog hit for "${neighborhoodName}": ${hardcoded.length} streets`);
+// ─── GET STREETS FOR ANY AREA VIA OSM ────────────────────────────────────────
+async function getNeighborhoodStreets(name, lat, lng) {
+  // 1. Check hardcoded catalog first — instant
+  const hardcoded = lookupNeighborhoodStreets(name);
+  if (hardcoded && hardcoded.length > 0) {
+    console.log(`Catalog hit for "${name}": ${hardcoded.length} streets`);
     return hardcoded;
   }
 
-  // Fallback: OSM radius query for neighborhoods not in catalog
-  console.log(`No catalog entry for "${neighborhoodName}", using OSM radius`);
+  if (!lat || !lng) return [];
+
+  // 2. Try OSM boundary relation lookup — gets exact neighborhood polygon
   try {
-    const overpassQuery = `[out:json][timeout:15];way(around:700,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian)$"]["name"];out tags;`;
-    const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`, {
-      headers: { "User-Agent": "MoveMyCar/1.0" }
-    });
-    if (!r.ok) return [];
-    const data = await r.json();
-    return [...new Set((data.elements || []).map(w => w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
-  } catch(e) {
-    console.error("OSM fallback error:", e.message);
-    return [];
+    const cleanName = name.replace(/"/g,"").replace(/the /gi,"").replace(/\bSF\b/gi,"San Francisco").trim();
+    const boundaryQuery = `[out:json][timeout:20];(relation["boundary"="administrative"]["name"~"${cleanName}",i](around:2000,${lat},${lng});relation["place"~"^(neighbourhood|quarter|suburb|district|city_block)$"]["name"~"${cleanName}",i](around:2000,${lat},${lng}););out ids;`;
+    const br = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(boundaryQuery)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
+    if (br.ok) {
+      const bd = await br.json();
+      const relations = bd.elements || [];
+      if (relations.length > 0) {
+        const relId = relations[0].id;
+        const streetsQuery = `[out:json][timeout:25];area(id:${3600000000+relId})->.a;way(area.a)["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
+        const sr = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(streetsQuery)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
+        if (sr.ok) {
+          const sd = await sr.json();
+          const streets = [...new Set((sd.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
+          if (streets.length >= 3) {
+            console.log(`OSM boundary for "${name}": ${streets.length} streets`);
+            return streets;
+          }
+        }
+      }
+    }
+  } catch(e) { console.error("OSM boundary error:", e.message); }
+
+  // 3. Radius fallback with progressive expansion — 600m → 900m → 1200m
+  for (const radius of [600, 900, 1200]) {
+    try {
+      const q = `[out:json][timeout:20];way(around:${radius},${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street|pedestrian|trunk)$"]["name"];out tags;`;
+      const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`,{headers:{"User-Agent":"StreetParkNow/1.0"}});
+      if (r.ok) {
+        const d = await r.json();
+        const streets = [...new Set((d.elements||[]).map(w=>w.tags?.name?.toUpperCase()).filter(Boolean))].sort();
+        if (streets.length >= 3) {
+          console.log(`OSM radius ${radius}m for "${name}": ${streets.length} streets`);
+          return streets;
+        }
+      }
+    } catch(e) { console.error(`OSM radius ${radius} error:`, e.message); }
   }
+
+  return [];
 }
 
 // ─── SMART GEOCODE ────────────────────────────────────────────────────────────
@@ -218,229 +269,113 @@ app.get("/api/geocode", async (req, res) => {
   if (!q) return res.status(400).json({ error: "q required" });
 
   const GOOGLE_KEY = process.env.GOOGLE_MAPS_KEY;
+  const qClean = q.trim()
+    .replace(/\s*(apt|apartment|unit|suite|ste|fl|floor|#)\s*[\w-]+/gi, "")
+    .replace(/\(.*?\)/g, "")
+    .trim();
 
-  // ── STEP 1: If it looks like a full address, go straight to Google ────────
-  const looksLikeAddress = /^\d+\s+\w/.test(q.trim());
-  if (looksLikeAddress && GOOGLE_KEY) {
+  // ── STEP 1: Google Places/Geocoding API — handles EVERYTHING ─────────────
+  // Wrigley Field, MetLife, Court Square, West Village, 90210, The MET — all of it
+  if (GOOGLE_KEY) {
     try {
-      const stripped = q.replace(/\s*(apt|apartment|unit|suite|ste|fl|floor|#)\s*[\w-]+/gi, "").replace(/\(.*?\)/g, "").trim();
-      const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(stripped)}&key=${GOOGLE_KEY}&region=us&components=country:US`;
+      // Build location bias from user's GPS if available — critical for address disambiguation
+      const biasParam = userLat && userLng
+        ? `&location=${userLat},${userLng}&radius=50000`  // 50km radius around user
+        : "";
+      const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(qClean)}&key=${GOOGLE_KEY}&region=us${biasParam}`;
       const gr = await fetch(gUrl);
       if (gr.ok) {
         const gd = await gr.json();
         if (gd.status === "OK" && gd.results?.length > 0) {
           const result = gd.results[0];
-          const loc = result.geometry.location;
-          const lat = loc.lat, lng = loc.lng;
+          const { lat, lng } = result.geometry.location;
           const comps = result.address_components || [];
           const get = (type) => comps.find(c => c.types.includes(type))?.long_name || "";
-          const street = (get("route") || q).toUpperCase();
+          const types = result.types || [];
+
+          const street      = get("route")?.toUpperCase() || "";
+          const streetNum   = get("street_number");
           const neighborhood = get("neighborhood") || get("sublocality_level_2") || "";
-          const borough = get("sublocality_level_1") || get("sublocality") || "";
-          const city = get("locality") || "";
-          const label = result.formatted_address?.split(",").slice(0,2).join(",") || q;
+          const borough     = get("sublocality_level_1") || get("sublocality") || "";
+          const city        = get("locality") || get("administrative_area_level_2") || "";
+          const state       = get("administrative_area_level_1") || "";
+          const zip         = get("postal_code") || "";
+          const label       = result.formatted_address?.split(",").slice(0,2).join(",") || q;
+          const country     = get("country") || "";
 
-          // Get nearby streets sorted by proximity
-          let nearbyStreets = [street];
-          try {
-            const raw = await askClaude(`Urban geography expert. Coordinates lat=${lat}, lng=${lng} in ${neighborhood || borough || city}. List 12 nearest streets sorted closest to farthest. Primary street: "${street}". Return ONLY a JSON array of street names in ALL CAPS.`, 800);
-            const match = raw.match(/\[[\s\S]*\]/);
-            if (match) { const parsed = JSON.parse(match[0]); if (Array.isArray(parsed) && parsed.length > 0) nearbyStreets = parsed; }
-          } catch(e) {}
+          console.log(`Google geocode "${q}": types=${types.join(",")}, lat=${lat}, lng=${lng}`);
 
-          return res.json({ type:"location", isGPS:true, isEstablishment:false, isPark:false, isZip:false, street, borough, neighborhood, city, label, originalQuery:q, lat, lng, nearbyStreets });
+          // ZIP code
+          if (types.includes("postal_code") || /^\d{5}$/.test(qClean)) {
+            const streets = await getNeighborhoodStreets(q, lat, lng);
+            return res.json({ type:"zip", isZip:true, label:`${zip} ${city}`, street, borough, neighborhood, city, state, lat, lng, zipStreets:streets, originalQuery:q });
+          }
+
+          // Always get streets from OSM for the coordinates — works for everything
+          const streets = await getNeighborhoodStreets(qClean, lat, lng);
+          const isArea = streets.length >= 6;
+
+          // Is it a named neighborhood/area?
+          const isNeighborhoodType = types.some(t => ["neighborhood","sublocality","sublocality_level_1","sublocality_level_2","political"].includes(t));
+          // Is it a point of interest / establishment / landmark?
+          const isEstabType = types.some(t => ["establishment","point_of_interest","stadium","park","museum","university","airport","transit_station","train_station"].includes(t));
+          // Is it a street address?
+          const isAddress = !!streetNum || types.includes("street_address") || types.includes("premise");
+
+          if (isNeighborhoodType || (isArea && !isEstabType)) {
+            return res.json({ type:"neighborhood", isNeighborhood:true, isZip:false, isPark:false, isEstablishment:false, label:`${neighborhood || borough || city}`, street, borough, neighborhood, city, state, lat, lng, zipStreets:streets, originalQuery:q });
+          }
+
+          // For everything else — establishments, landmarks, addresses, parks
+          // Always return nearby streets so user is never stranded
+          return res.json({ type:"location", isGPS:true, isNeighborhood:false, isZip:false, isPark:false, isEstablishment:false, label, street, borough, neighborhood, city, state, lat, lng, nearbyStreets:streets.length > 0 ? streets : [street].filter(Boolean), originalQuery:q });
         }
       }
-    } catch(e) { console.error("Google address geocode error:", e.message); }
+    } catch(e) { console.error("Google geocode error:", e.message); }
   }
 
+  // ── STEP 2: Claude fallback — only for ambiguous/slang that Google can't resolve ─
   let raw = "";
   try {
-    raw = await askClaude(`You are a US urban geography and parking expert covering all major cities. A driver typed: "${q}"
+    raw = await askClaude(`You are a US urban geography and parking expert. A driver typed: "${q}"
 
-First detect the CITY this refers to. Supported cities: New York City, Los Angeles, Chicago, San Francisco, Boston, Philadelphia, Washington DC, Seattle, Miami, Atlanta, Toronto, Denver, Portland OR, Nashville, Austin, Minneapolis.
-If no city is clear from the query, default to New York City.
+Supported cities: NYC, LA, Chicago, SF, Boston, Philadelphia, DC, Seattle, Miami, Atlanta, Toronto, Denver, Portland, Nashville, Austin, Minneapolis, Dallas, Sacramento, New Jersey, San Diego.
 
-Then classify the query using the same types as before.
+LOCAL SLANG:
+NYC: "BK"=Brooklyn | "LIC"=Long Island City | "UWS"=Upper West Side | "UES"=Upper East Side | "the village"=Greenwich Village | "alphabet city"=East Village NY | "the slope"=Park Slope Brooklyn | "bed stuy"=Bedford-Stuyvesant Brooklyn | "bedstuy"=Bedford-Stuyvesant Brooklyn | "bedford stuyvesant"=Bedford-Stuyvesant Brooklyn | "washington heights"=Washington Heights Manhattan | "sunset park"=Sunset Park Brooklyn | "the heights"=Washington Heights Manhattan | "Ditmas"=Ditmas Park Brooklyn | "PLG"=Prospect Lefferts Gardens Brooklyn | "crown heights"=Crown Heights Brooklyn | "inwood"=Inwood Manhattan | "bay ridge"=Bay Ridge Brooklyn | "forest hills"=Forest Hills Queens | "ridgewood"=Ridgewood Queens | "woodside"=Woodside Queens | "corona"=Corona Queens | "elmhurst"=Elmhurst Queens | "riverdale"=Riverdale Bronx
+LA: "WeHo"=West Hollywood CA | "SaMo"=Santa Monica CA | "DTLA"=Downtown Los Angeles | "K-town"=Koreatown Los Angeles | "koreatown"=Koreatown Los Angeles | "Sil Lake"=Silver Lake Los Angeles | "echo"=Echo Park Los Angeles | "Bev Hills"=Beverly Hills CA | "the valley"=Van Nuys CA | "Boyle Heights"=Boyle Heights Los Angeles | "Highland Park"=Highland Park Los Angeles | "Eagle Rock"=Eagle Rock Los Angeles | "Atwater Village"=Atwater Village Los Angeles | "Leimert Park"=Leimert Park Los Angeles | "Crenshaw"=Crenshaw Los Angeles
+Chicago: "the loop"=Loop Chicago | "Wicker"=Wicker Park Chicago | "Boystown"=Lakeview East Chicago | "Logan"=Logan Square Chicago | "Bucktown"=Bucktown Chicago | "River North"=River North Chicago | "West Loop"=West Loop Chicago | "South Loop"=South Loop Chicago | "Bronzeville"=Bronzeville Chicago | "Andersonville"=Andersonville Chicago | "RoNo"=Rogers Park Chicago | "Uptown"=Uptown Chicago | "Pilsen"=Pilsen Chicago | "Humboldt"=Humboldt Park Chicago
+SF: "the mish"=Mission District San Francisco | "the TL"=Tenderloin San Francisco | "SOMA"=South of Market San Francisco | "Noe"=Noe Valley San Francisco | "the haight"=Haight-Ashbury San Francisco | "the castro"=Castro San Francisco | "the richmond"=Richmond District San Francisco | "the sunset"=Outer Sunset San Francisco | "dogpatch"=Dogpatch San Francisco | "potrero"=Potrero Hill San Francisco | "bernal"=Bernal Heights San Francisco | "oracle park"=China Basin San Francisco | "chase center"=Mission Bay San Francisco | "outer richmond"=Outer Richmond San Francisco | "russian hill"=Russian Hill San Francisco | "pacific heights"=Pacific Heights San Francisco | "north beach"=North Beach San Francisco
+Boston: "JP"=Jamaica Plain Boston | "Dot"=Dorchester Boston | "Southie"=South Boston MA | "Eastie"=East Boston MA | "the north end"=North End Boston | "the back bay"=Back Bay Boston | "beacon hill"=Beacon Hill Boston | "the south end"=South End Boston | "Rozzie"=Roslindale Boston | "West Rox"=West Roxbury Boston | "Charlestown"=Charlestown Boston | "fenway park"=Kenmore Square Boston | "mission hill"=Mission Hill Boston | "roxbury"=Roxbury Boston
+Philadelphia: "Fishtown"=Fishtown Philadelphia | "NoLibs"=Northern Liberties Philadelphia | "Fairmount"=Fairmount Philadelphia | "south philly"=South Philadelphia | "Rittenhouse"=Rittenhouse Square Philadelphia | "citizens bank park"=South Philadelphia PA | "passyunk"=East Passyunk Philadelphia | "bella vista"=Bella Vista Philadelphia | "point breeze"=Point Breeze Philadelphia | "graduate hospital"=Graduate Hospital Philadelphia
+DC: "Adams Morgan"=Adams Morgan Washington DC | "U Street"=U Street NW Washington DC | "the Hill"=Capitol Hill Washington DC | "Navy Yard"=Navy Yard Washington DC | "Georgetown"=Georgetown Washington DC | "Dupont"=Dupont Circle Washington DC | "Columbia Heights"=Columbia Heights Washington DC | "Petworth"=Petworth Washington DC | "Shaw"=Shaw Washington DC | "NoMa"=NoMa Washington DC | "nationals park"=Navy Yard Washington DC | "Brookland"=Brookland Washington DC | "Anacostia"=Anacostia Washington DC
+Seattle: "Cap Hill"=Capitol Hill Seattle | "Fremont"=Fremont Seattle | "Ballard"=Ballard Seattle | "SLU"=South Lake Union Seattle | "the CD"=Central District Seattle | "SODO"=SoDo Seattle | "Belltown"=Belltown Seattle | "Queen Anne"=Queen Anne Seattle | "Greenlake"=Green Lake Seattle | "Wallingford"=Wallingford Seattle | "U District"=University District Seattle | "t-mobile park"=SoDo Seattle | "lumen field"=SoDo Seattle | "Magnolia"=Magnolia Seattle
+Miami: "Wynwood"=Wynwood Miami FL | "wynwood"=Wynwood Miami FL | "south beach"=South Beach Miami Beach FL | "little havana"=Little Havana Miami FL | "Coconut Grove"=Coconut Grove Miami FL | "Design District"=Design District Miami FL | "Edgewater"=Edgewater Miami FL | "Little Haiti"=Little Haiti Miami FL | "hard rock stadium"=Miami Gardens FL | "kaseya center"=Brickell Miami FL
+Atlanta: "Little Five Points"=Little Five Points Atlanta GA | "little five points"=Little Five Points Atlanta GA | "Buckhead"=Buckhead Atlanta GA | "Old Fourth Ward"=Old Fourth Ward Atlanta GA | "old fourth ward"=Old Fourth Ward Atlanta GA | "Inman Park"=Inman Park Atlanta GA | "Cabbagetown"=Cabbagetown Atlanta GA | "Grant Park"=Grant Park Atlanta GA | "mercedes-benz stadium"=Vine City Atlanta GA | "state farm arena"=Downtown Atlanta GA | "truist park"=Cumberland GA
+NJ: "Hobo"=Hoboken NJ | "hoboken"=Hoboken NJ | "JC"=Jersey City NJ | "JC heights"=Jersey City Heights NJ | "jersey city heights"=Jersey City Heights NJ | "journal square"=Journal Square Jersey City NJ | "downtown jersey city"=Downtown Jersey City NJ | "grove street"=Grove Street Jersey City NJ | "metlife stadium"=East Rutherford NJ | "prudential center"=Newark NJ | "newark"=Newark NJ | "montclair"=Montclair NJ | "the heights"=Jersey City Heights NJ
+Dallas: "Deep Ellum"=Deep Ellum Dallas TX | "deep ellum"=Deep Ellum Dallas TX | "Bishop Arts"=Bishop Arts District Dallas TX | "bishop arts"=Bishop Arts District Dallas TX | "uptown dallas"=Uptown Dallas TX | "Knox Henderson"=Knox Henderson Dallas TX | "Lower Greenville"=Lower Greenville Dallas TX | "Oak Cliff"=Oak Cliff Dallas TX | "at&t stadium"=Arlington TX | "american airlines center"=Victory Park Dallas TX
+Nashville: "East Nashville"=East Nashville TN | "east nashville"=East Nashville TN | "12 south"=12South Nashville TN | "The Gulch"=The Gulch Nashville TN | "the gulch"=The Gulch Nashville TN | "Germantown"=Germantown Nashville TN | "bridgestone arena"=Downtown Nashville TN | "nissan stadium"=East Bank Nashville TN
+Austin: "East Austin"=East Austin TX | "east austin"=East Austin TX | "South Congress"=South Congress Austin TX | "south congress"=South Congress Austin TX | "Rainey Street"=Rainey Street Austin TX | "rainey street"=Rainey Street Austin TX | "moody center"=University of Texas Austin TX | "North Loop"=North Loop Austin TX | "Travis Heights"=Travis Heights Austin TX | "Clarksville"=Clarksville Austin TX
+Sacramento: "midtown sacramento"=Midtown Sacramento CA | "east sacramento"=East Sacramento CA | "Land Park"=Land Park Sacramento CA | "Oak Park"=Oak Park Sacramento CA | "golden 1 center"=Downtown Sacramento CA | "sutter health park"=West Sacramento CA
+Minneapolis: "uptown minneapolis"=Uptown Minneapolis MN | "northeast minneapolis"=Northeast Minneapolis MN | "North Loop"=North Loop Minneapolis MN | "Dinkytown"=Dinkytown Minneapolis MN | "Seward"=Seward Minneapolis MN | "us bank stadium"=Downtown Minneapolis MN | "target field"=Downtown Minneapolis MN
+Portland: "pearl district"=Pearl District Portland OR | "alberta arts district"=Alberta Arts District Portland OR | "alberta arts"=Alberta Arts District Portland OR | "Hawthorne"=Hawthorne Portland OR | "Division"=Division Street Portland OR | "Mississippi Ave"=Mississippi Avenue Portland OR | "moda center"=Rose Quarter Portland OR | "providence park"=Goose Hollow Portland OR | "St Johns"=Saint Johns Portland OR
+San Diego: "North Park"=North Park San Diego CA | "north park"=North Park San Diego CA | "Hillcrest"=Hillcrest San Diego CA | "hillcrest"=Hillcrest San Diego CA | "Ocean Beach"=Ocean Beach San Diego CA | "ocean beach"=Ocean Beach San Diego CA | "OB"=Ocean Beach San Diego CA | "Mission Beach"=Mission Beach San Diego CA | "mission beach"=Mission Beach San Diego CA | "Pacific Beach"=Pacific Beach San Diego CA | "pacific beach"=Pacific Beach San Diego CA | "PB"=Pacific Beach San Diego CA | "La Jolla"=La Jolla San Diego CA | "la jolla"=La Jolla San Diego CA | "East Village"=East Village San Diego CA | "Gaslamp"=Gaslamp Quarter San Diego CA | "gaslamp"=Gaslamp Quarter San Diego CA | "Little Italy"=Little Italy San Diego CA | "little italy sd"=Little Italy San Diego CA | "South Park"=South Park San Diego CA | "Normal Heights"=Normal Heights San Diego CA | "Kensington"=Kensington San Diego CA | "City Heights"=City Heights San Diego CA | "Barrio Logan"=Barrio Logan San Diego CA | "Golden Hill"=Golden Hill San Diego CA | "Bankers Hill"=Bankers Hill San Diego CA | "petco park"=East Village San Diego CA | "snapdragon stadium"=Mission Valley San Diego CA | "pechanga arena"=Midway San Diego CA
+Toronto: "Kensington"=Kensington Market Toronto ON | "Queen West"=Queen Street West Toronto ON | "Distillery"=Distillery District Toronto ON | "Annex"=The Annex Toronto ON | "Yorkville"=Yorkville Toronto ON | "Leslieville"=Leslieville Toronto ON | "Roncesvalles"=Roncesvalles Toronto ON | "Parkdale"=Parkdale Toronto ON | "scotiabank arena"=Entertainment District Toronto ON | "rogers centre"=Entertainment District Toronto ON
+Denver: "RiNo"=River North Denver CO | "rino"=River North Denver CO | "LoDo"=LoDo Denver CO | "lodo"=LoDo Denver CO | "Highland"=Highland Denver CO | "highland denver"=Highland Denver CO | "Wash Park"=Washington Park Denver CO | "Cherry Creek"=Cherry Creek Denver CO | "Five Points"=Five Points Denver CO | "Baker"=Baker Denver CO | "coors field"=LoDo Denver CO | "ball arena"=Downtown Denver CO | "empower field"=Sun Valley Denver CO
 
-LOCAL SLANG AND NICKNAMES BY CITY:
-NYC: "the city"=Manhattan | "BK"=Brooklyn | "the bronx"=Bronx | "SI"=Staten Island | "LIC"=Long Island City | "UWS"=Upper West Side | "UES"=Upper East Side | "HK" or "Hell's Kitchen"=Clinton | "Noho","Soho","Tribeca","Dumbo","Nolita"=neighborhoods | "the village"=Greenwich Village | "alphabet city"=East Village | "the slope"=Park Slope | "the heights"=Washington Heights or Brooklyn Heights | "Ditmas"=Ditmas Park | "Prospect-Lefferts"=PLG
-LA: "WeHo"=West Hollywood | "SaMo"=Santa Monica | "DTLA"=Downtown LA | "the valley"=San Fernando Valley | "Los Feliz"=Los Feliz | "Sil Lake"=Silver Lake | "echo"=Echo Park | "Bev Hills"=Beverly Hills | "Palms"=Palms | "Mar Vista"=Mar Vista | "Culver"=Culver City | "K-town"=Koreatown | "MacArthur Park"=Westlake | "the eastside"=East LA/Boyle Heights
-Chicago: "the loop"=Loop | "Wicker"=Wicker Park | "Boystown"=Lakeview East | "the mag mile"=Magnificent Mile | "Pilsen"=Pilsen | "Little Village"=South Lawndale | "Bridgeport"=Bridgeport | "Lincoln Square"=Lincoln Square | "RoNo"=Rogers Park | "Andersonville"=Andersonville | "Uptown"=Uptown | "Humboldt"=Humboldt Park | "Logan"=Logan Square | "Ukrainian Village"=Ukrainian Village | "Noble Square"=Noble Square
-SF: "the mish"=Mission District | "the haight"=Haight-Ashbury | "SOMA"=South of Market | "the TL"=Tenderloin | "Noe"=Noe Valley | "the castro"=Castro | "the avenues"=Sunset/Richmond | "the sunset"=Outer Sunset | "inner sunset"=Inner Sunset | "the richmond"=Richmond District | "dogpatch"=Dogpatch | "potrero"=Potrero Hill | "bernal"=Bernal Heights | "glen park"=Glen Park | "excelsior"=Excelsior | "visitacion"=Visitacion Valley | "bayview"=Bayview | "hunters point"=Hunters Point
-Boston: "JP"=Jamaica Plain | "Dot"=Dorchester | "Southie"=South Boston | "Eastie"=East Boston | "the north end"=North End | "Allston/Brighton"=Allston | "the fenway"=Fenway | "the back bay"=Back Bay | "beacon hill"=Beacon Hill | "the south end"=South End | "Rozzie"=Roslindale | "West Rox"=West Roxbury | "Hyde Park"=Hyde Park | "Charlestown"=Charlestown | "Camberville"=Cambridge/Somerville
-Philadelphia: "Fishtown"=Fishtown | "NoLibs"=Northern Liberties | "Fairmount"=Fairmount | "the Italian market"=South Philly | "Rittenhouse"=Rittenhouse Square | "Old City"=Old City | "Manayunk"=Manayunk | "Kensington"=Kensington | "West Philly"=West Philadelphia | "Mt Airy"=Mount Airy | "Chestnut Hill"=Chestnut Hill | "East Falls"=East Falls | "Roxborough"=Roxborough
-DC: "Adams Morgan"=Adams Morgan | "U Street"=U Street Corridor | "H Street"=H Street NE | "the Hill"=Capitol Hill | "Navy Yard"=Navy Yard | "Georgetown"=Georgetown | "Dupont"=Dupont Circle | "Woodley"=Woodley Park | "Columbia Heights"=Columbia Heights | "Petworth"=Petworth | "Shaw"=Shaw | "Logan"=Logan Circle | "NoMa"=North of Massachusetts Ave | "Brookland"=Brookland
-Seattle: "Cap Hill"=Capitol Hill | "Fremont"=Fremont | "Ballard"=Ballard | "the CD"=Central District | "SLU"=South Lake Union | "Beacon"=Beacon Hill | "Columbia City"=Columbia City | "Georgetown"=Georgetown | "SODO"=South of Downtown | "Belltown"=Belltown | "Queen Anne"=Queen Anne | "Magnolia"=Magnolia | "Greenlake"=Green Lake | "Wallingford"=Wallingford | "U District"=University District | "Ravenna"=Ravenna
-
-KEY COORDS BY CITY:
-NYC: times sq=40.7580,-73.9855 | central park=40.7851,-73.9683 | brooklyn heights=40.6960,-73.9951 | williamsburg=40.7081,-73.9571 | astoria=40.7721,-73.9302 | greenpoint=40.7282,-73.9542 | park slope=40.6681,-73.9800 | lic=40.7447,-73.9485 | harlem=40.8116,-73.9465 | flushing=40.7675,-73.8330 | washington heights=40.8448,-73.9387
-LA: dtla=34.0522,-118.2437 | santa monica=34.0195,-118.4912 | west hollywood=34.0900,-118.3617 | silver lake=34.0870,-118.2695 | echo park=34.0780,-118.2606 | los feliz=34.1064,-118.2931 | koreatown=34.0586,-118.3005 | culver city=34.0211,-118.3965 | venice=33.9850,-118.4695 | pasadena=34.1478,-118.1445 | long beach=33.7701,-118.1937
-Chicago: loop=41.8827,-87.6233 | wicker park=41.9088,-87.6797 | lincoln park=41.9214,-87.6513 | lakeview=41.9400,-87.6553 | logan square=41.9217,-87.7079 | pilsen=41.8543,-87.6576 | hyde park=41.7943,-87.5907 | andersonville=41.9812,-87.6680 | humboldt park=41.9006,-87.7226 | boystown=41.9436,-87.6490
-SF: mission=37.7599,-122.4148 | haight=37.7692,-122.4481 | soma=37.7785,-122.3948 | castro=37.7609,-122.4350 | noe valley=37.7502,-122.4337 | richmond=37.7780,-122.4830 | sunset=37.7525,-122.4875 | bernal heights=37.7390,-122.4153 | dogpatch=37.7596,-122.3902 | potrero hill=37.7590,-122.4014
-Boston: back bay=42.3503,-71.0810 | south end=42.3398,-71.0746 | beacon hill=42.3588,-71.0707 | cambridge=42.3736,-71.1097 | jamaica plain=42.3100,-71.1128 | dorchester=42.3014,-71.0641 | south boston=42.3388,-71.0447 | charlestown=42.3782,-71.0602 | allston=42.3540,-71.1323 | fenway=42.3467,-71.0972
-Philadelphia: center city=39.9526,-75.1652 | fishtown=39.9748,-75.1338 | northern liberties=39.9637,-75.1416 | south philly=39.9186,-75.1687 | west philly=39.9484,-75.2182 | manayunk=40.0278,-75.2266 | germantown=40.0359,-75.1724 | fairmount=39.9685,-75.1768 | rittenhouse=39.9496,-75.1727
-DC: georgetown=38.9076,-77.0723 | dupont=38.9096,-77.0434 | adams morgan=38.9211,-77.0419 | capitol hill=38.8897,-77.0038 | u street=38.9177,-77.0319 | columbia heights=38.9284,-77.0317 | navy yard=38.8762,-77.0053 | shaw=38.9122,-77.0231 | brookland=38.9344,-76.9941 | petworth=38.9394,-77.0269
-Seattle: capitol hill=47.6253,-122.3222 | fremont=47.6510,-122.3500 | ballard=47.6685,-122.3829 | belltown=47.6148,-122.3468 | queen anne=47.6373,-122.3565 | slu=47.6261,-122.3353 | central district=47.6062,-122.3014 | beacon hill=47.5693,-122.3070 | georgetown=47.5485,-122.3237 | u district=47.6614,-122.3152
-Miami: brickell=25.7617,-80.1918 | wynwood=25.8008,-80.1993 | little havana=25.7667,-80.2270 | coconut grove=25.7253,-80.2385 | miami beach=25.7907,-80.1300 | south beach=25.7825,-80.1341 | midtown=25.8120,-80.1934 | design district=25.8153,-80.1960 | downtown=25.7742,-80.1937 | edgewater=25.7942,-80.1874
-Atlanta: midtown=33.7842,-84.3830 | buckhead=33.8484,-84.3788 | little five points=33.7649,-84.3507 | inman park=33.7524,-84.3535 | old fourth ward=33.7573,-84.3630 | virginia highland=33.7774,-84.3491 | east atlanta=33.7352,-84.3396 | west end=33.7344,-84.4130 | cabbagetown=33.7480,-84.3621 | grant park=33.7348,-84.3731
-Toronto: kensington market=43.6547,-79.4009 | queen west=43.6454,-79.4157 | distillery district=43.6503,-79.3592 | annex=43.6687,-79.4057 | yorkville=43.6709,-79.3924 | little italy=43.6554,-79.4210 | leslieville=43.6617,-79.3341 | roncesvalles=43.6473,-79.4486 | ossington=43.6522,-79.4244 | parkdale=43.6378,-79.4445
-Denver: lodo=39.7537,-104.9999 | rino=39.7687,-104.9766 | capitol hill=39.7296,-104.9805 | highland=39.7638,-105.0121 | wash park=39.6969,-104.9660 | cherry creek=39.7153,-104.9521 | five points=39.7534,-104.9741 | baker=39.7136,-104.9861 | curtis park=39.7579,-104.9700 | whittier=39.7500,-104.9614
-Portland: pearl district=45.5266,-122.6836 | alberta arts=45.5593,-122.6375 | hawthorne=45.5116,-122.6385 | mississippi ave=45.5546,-122.6769 | division=45.5033,-122.6348 | nob hill=45.5280,-122.6957 | inner southeast=45.5118,-122.6490 | woodstock=45.4844,-122.6262 | sellwood=45.4686,-122.6543 | st johns=45.5927,-122.7519
-Nashville: east nashville=36.1741,-86.7580 | 12 south=36.1201,-86.7970 | germantown=36.1784,-86.7878 | gulch=36.1502,-86.7937 | sylvan park=36.1536,-86.8327 | hillsboro village=36.1354,-86.8038 | belmont=36.1301,-86.7925 | five points=36.1748,-86.7517 | nations=36.1594,-86.8582 | buena vista=36.1653,-86.8046
-Austin: south congress=30.2432,-97.7503 | east austin=30.2589,-97.7202 | north loop=30.3184,-97.7200 | mueller=30.2970,-97.7032 | domain=30.4021,-97.7237 | rainey street=30.2587,-97.7389 | west campus=30.2901,-97.7463 | travis heights=30.2378,-97.7415 | clarksville=30.2795,-97.7614 | cherrywood=30.2784,-97.7220
-Minneapolis: uptown=44.9488,-93.2986 | northeast=44.9940,-93.2561 | north loop=44.9874,-93.2755 | dinkytown=44.9812,-93.2350 | seward=44.9499,-93.2278 | longfellow=44.9287,-93.2213 | south minneapolis=44.9138,-93.2707 | st anthony=44.9830,-93.2474 | powderhorn=44.9265,-93.2557 | linden hills=44.9110,-93.3251
-Dallas: deep ellum=32.7837,-96.7897 | uptown=32.7985,-96.8012 | oak cliff=32.7468,-96.8344 | bishop arts=32.7440,-96.8377 | lower greenville=32.8220,-96.7758 | knox henderson=32.8200,-96.7900 | design district=32.8030,-96.8245 | lakewood=32.8157,-96.7393 | downtown=32.7767,-96.7970 | m streets=32.8278,-96.7706
-Sacramento: midtown=38.5735,-121.4754 | east sacramento=38.5698,-121.4441 | land park=38.5401,-121.4908 | oak park=38.5487,-121.4677 | natomas=38.6280,-121.5000 | downtown=38.5816,-121.4944 | curtis park=38.5395,-121.4820 | fab forties=38.5726,-121.4392 | river district=38.6063,-121.5000 | arden=38.6085,-121.4231
-
-Return the same JSON format as before but include a "city" field in every response.
-For NEIGHBORHOOD type include the city in the label e.g. "Wicker Park, Chicago".
-For LOCATION type include city and state e.g. "Silver Lake, Los Angeles".
-
-AMBIGUOUS EXAMPLES (cross-city):
-- "lincoln park" → ambiguous: neighborhood Chicago + park NYC
-- "georgetown" → ambiguous: neighborhood DC + neighborhood Seattle
-- "mission" → ambiguous: neighborhood SF (Mission District) + could be other cities
-
-NEIGHBORHOOD EXAMPLES — ALWAYS return as neighborhood type with ALL streets listed in neighborhoodStreets:
-- "west village" → neighborhood Manhattan: BANK ST, BARROW ST, BEDFORD ST, BETHUNE ST, CHARLES ST, CHRISTOPHER ST, CLARKSON ST, COMMERCE ST, CORNELIA ST, GROVE ST, HORATIO ST, HUDSON ST, JANE ST, LEROY ST, MORTON ST, PERRY ST, TENTH AVENUE, WASHINGTON ST, WEST 10 STREET, WEST 11 STREET, WEST 12 STREET, WEST 4 STREET, WEST STREET
-- "east village" → neighborhood Manhattan with all streets
-- "brooklyn heights" → neighborhood Brooklyn with all streets
-- "park slope" → neighborhood Brooklyn with all streets
-- "upper west side" → neighborhood Manhattan with all streets
-- "hell's kitchen" → neighborhood Manhattan with all streets
-- "greenwich village" → neighborhood Manhattan with all streets
-- "soho" → neighborhood Manhattan with all streets
-- "tribeca" → neighborhood Manhattan with all streets
-- "dumbo" → neighborhood Brooklyn with all streets
-- "williamsburg" → neighborhood Brooklyn with all streets
-- "bushwick" → neighborhood Brooklyn with all streets
-- "wicker park" → neighborhood Chicago with all streets
-- "logan square" → neighborhood Chicago with all streets
-- "silver lake" → neighborhood LA with all streets
-- "echo park" → neighborhood LA with all streets
-- "mission district" → neighborhood SF with all streets
-- "haight ashbury" → neighborhood SF with all streets
-- "capitol hill" → neighborhood Seattle with all streets
-- "adams morgan" → neighborhood DC with all streets
-- "south end" → neighborhood Boston with all streets
-- "fishtown" → neighborhood Philadelphia with all streets
-- "northern liberties" → neighborhood Philadelphia with all streets
-
-LOCATION EXAMPLES (landmarks/plazas/squares — return as location type with coords):
-- "court square" → location in LIC Queens, lat=40.7472, lng=-73.9454
-- "times square" → location Manhattan, lat=40.7580, lng=-73.9855
-- "union square" → location Manhattan OR SF depending on context
-- "the met" → establishment (Metropolitan Museum) on 5th Ave Manhattan
-- "wrigley field" → establishment in Chicago
-- "grand army plaza" → location Brooklyn, lat=40.6742, lng=-73.9700
-
-Return ONLY the JSON, no markdown.`, 3000);
+Return JSON: { "type": "neighborhood"|"location"|"ambiguous"|"zip", "lat": number, "lng": number, "label": string, "borough": string, "neighborhood": string, "city": string, "street": string, "isNeighborhood": bool, "options": [] }
+Return ONLY the JSON.`, 1500);
 
     const loc = JSON.parse(raw.replace(/```json|```/g,"").trim());
-
     if (loc.type === "ambiguous") return res.json({ ...loc, originalQuery: q });
-
-    // Neighborhood — get real streets from OpenStreetMap
-    if (loc.type === "neighborhood" || loc.isNeighborhood) {
+    if (loc.lat && loc.lng) {
       const streets = await getNeighborhoodStreets(q, loc.lat, loc.lng);
-      console.log(`Neighborhood "${q}": ${streets.length} streets from OSM`);
-      return res.json({ ...loc, isNeighborhood: true, isZip: false, isPark: false, isEstablishment: false, zipStreets: streets, originalQuery: q });
+      const isArea = streets.length >= 6;
+      return res.json({ ...loc, isNeighborhood: isArea || loc.isNeighborhood, isZip:false, isPark:false, isEstablishment:false, zipStreets: isArea ? streets : undefined, nearbyStreets: !isArea ? streets : undefined, originalQuery: q });
     }
+  } catch(e) { console.error("Claude geocode error:", e.message); }
 
-    // If Claude returned a location but it's a well-known neighborhood name, treat as neighborhood
-    if (loc.type === "location" && loc.lat) {
-      const neighborhoodKeywords = /village|heights|slope|park|hill|garden|square|place|town|side|point|field|wood|grove|bridge|haven|beach|bay|harbor|quarter|district|corridor|triangle|oval|circle|loop|row|mish|haight|dumbo|soho|tribeca|noho|nolita|bushwick|williamsburg|astoria|flushing|sunnyside/i;
-      const isLikelyNeighborhood = neighborhoodKeywords.test(q) && !q.match(/^\d+/) && !q.includes("&") && q.split(" ").length <= 4;
-      if (isLikelyNeighborhood) {
-        console.log(`Treating "${q}" as neighborhood, fetching OSM streets`);
-        const streets = await getNeighborhoodStreets(q, loc.lat, loc.lng);
-        if (streets.length > 0) {
-          return res.json({ ...loc, isNeighborhood: true, isZip: false, isPark: false, isEstablishment: false, zipStreets: streets, originalQuery: q });
-        }
-      }
-    }
-
-    if (loc.isEstablishment && loc.establishments?.length > 0 && userLat && userLng) {
-      const uLat = parseFloat(userLat), uLng = parseFloat(userLng);
-      loc.establishments.sort((a,b) => haversineKm(uLat,uLng,a.lat,a.lng) - haversineKm(uLat,uLng,b.lat,b.lng));
-    }
-
-    // For single locations (landmarks, plazas, intersections), return nearby streets
-    if (!loc.isEstablishment && !loc.isPark && !loc.isZip && loc.lat && loc.lng) {
-      try {
-        const raw = await askClaude(`You are an urban geography expert. Given coordinates lat=${loc.lat}, lng=${loc.lng} near "${q}" (${loc.neighborhood || loc.borough || loc.city || ""}), list the 12 nearest streets sorted closest to farthest. The primary street is "${loc.street}".
-
-Return ONLY a JSON array of street names in ALL CAPS. Include cross streets and parallel streets within a 6-block radius.
-Return ONLY the array.`, 1000);
-        const match = raw.match(/\[[\s\S]*\]/);
-        if (match) {
-          const parsed = JSON.parse(match[0]);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return res.json({ ...loc, isGPS: true, nearbyStreets: parsed, originalQuery: q });
-          }
-        }
-      } catch(e) { console.error("Nearby streets for location error:", e.message); }
-    }
-
-    if (loc.isEstablishment || loc.isPark || loc.isZip || loc.lat) {
-      return res.json({ ...loc, originalQuery: q });
-    }
-  } catch (e) { console.error("Claude geocode error:", e.message); }
-
-  // Google Geocoding API — handles landmarks, abbreviations, full addresses, neighborhoods
-  try {
-    let stripped = q
-      .replace(/\s*(apt|apartment|unit|suite|ste|fl|floor|#)\s*[\w-]+/gi, "")
-      .replace(/\(.*?\)/g, "")
-      .trim();
-
-    const GOOGLE_KEY = process.env.GOOGLE_MAPS_KEY;
-    const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(stripped)}&key=${GOOGLE_KEY}&region=us&components=country:US`;
-    const gr = await fetch(gUrl);
-    if (gr.ok) {
-      const gd = await gr.json();
-      if (gd.status === "OK" && gd.results?.length > 0) {
-        const result = gd.results[0];
-        const loc = result.geometry.location;
-        const lat = loc.lat, lng = loc.lng;
-        const comps = result.address_components || [];
-        const get = (type) => comps.find(c => c.types.includes(type))?.long_name || "";
-        const street = (get("route") || q).toUpperCase();
-        const streetNum = get("street_number");
-        const neighborhood = get("neighborhood") || get("sublocality_level_2") || "";
-        const borough = get("sublocality_level_1") || get("sublocality") || "";
-        const city = get("locality") || "";
-        const label = result.formatted_address?.split(",").slice(0,2).join(",") || q;
-
-        // If it's a street address, return surrounding streets sorted by proximity
-        const isAddress = /^\d+\s+\w/.test(stripped.trim()) || !!streetNum;
-        if (isAddress) {
-          let nearbyStreets = [street];
-          try {
-            const raw = await askClaude(`You are an urban geography expert. Given coordinates lat=${lat}, lng=${lng} in ${neighborhood || borough || city}, list the 12 nearest streets sorted closest to farthest. The primary street is "${street}".
-
-Return ONLY a JSON array of street names in ALL CAPS. Include cross streets and parallel streets within a 6-block radius.
-Return ONLY the array.`, 1000);
-            const match = raw.match(/\[[\s\S]*\]/);
-            if (match) {
-              const parsed = JSON.parse(match[0]);
-              if (Array.isArray(parsed) && parsed.length > 0) nearbyStreets = parsed;
-            }
-          } catch(e) { console.error("Nearby streets error:", e.message); }
-
-          return res.json({
-            type: "location", isGPS: true, isEstablishment: false, isPark: false, isZip: false,
-            street, borough, neighborhood, city, label, originalQuery: q, lat, lng, nearbyStreets,
-          });
-        }
-
-        return res.json({ type:"location", isEstablishment:false, isPark:false, isZip:false, street, borough, neighborhood, city, label, originalQuery:q, lat, lng });
-      }
-    }
-  } catch (e) { console.error("Google geocode error:", e.message); }
-
-  res.status(404).json({ error: `Couldn't find "${q}". Try a street name, zip code, or neighborhood in NYC, LA, Chicago, SF, Boston, Philadelphia, DC, Seattle, Miami, Atlanta, Toronto, Denver, Portland, Nashville, Austin, Minneapolis, Dallas, or Sacramento.` });
+  return res.status(404).json({ error: `Couldn't find "${q}". Try a street name, neighborhood, or landmark in one of our supported cities.` });
 });
 
 // Reverse geocode — uses Google for accuracy, returns nearby streets sorted by distance

@@ -92,6 +92,33 @@ async function askClaude(prompt, maxTokens = 1500) {
 app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
+const STREET_ABBR = {
+  AVE:"AVENUE", AV:"AVENUE", AVENUE:"AVENUE",
+  ST:"STREET", STR:"STREET", STREET:"STREET",
+  PL:"PLACE", PLACE:"PLACE",
+  RD:"ROAD", ROAD:"ROAD",
+  BLVD:"BOULEVARD", BOULEVARD:"BOULEVARD",
+  DR:"DRIVE", DRIVE:"DRIVE",
+  CT:"COURT", COURT:"COURT",
+  PKWY:"PARKWAY", PARKWAY:"PARKWAY",
+  LN:"LANE", LANE:"LANE",
+  SQ:"SQUARE", SQUARE:"SQUARE",
+  TER:"TERRACE", TERRACE:"TERRACE",
+  HWY:"HIGHWAY", HIGHWAY:"HIGHWAY",
+  EXT:"EXTENSION", EXTENSION:"EXTENSION",
+  PLZ:"PLAZA", PLAZA:"PLAZA",
+};
+function normStreet(s) {
+  if (!s) return "";
+  return String(s).toUpperCase()
+    .replace(/[.,]/g, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(w => STREET_ABBR[w] || w)
+    .join(" ")
+    .trim();
+}
+
 function parseSignText(text) {
   if (!text) return null;
   const upper = text.toUpperCase();
@@ -711,7 +738,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v2:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -735,18 +762,39 @@ app.get("/api/heatmap", async (req, res) => {
     const ways = (data.elements || []).filter(w => w.tags?.name && w.geometry?.length > 1);
     console.log(`Overpass: ${ways.length} ways`);
 
-    const streetNames = [...new Set(ways.map(w => w.tags.name.toUpperCase()))].slice(0, 20);
+    const streetNames = [...new Set(ways.map(w => normStreet(w.tags.name)))].slice(0, 50);
     if (!streetNames.length) return res.json([]);
 
-    const schedulesRaw = await askClaude(`Alternate side parking schedules near lat=${lat}, lng=${lng}.
-Streets:
+    const schedulesRaw = await askClaude(`You are an NYC alternate side parking expert. For each street near lat=${lat}, lng=${lng}, give the current street cleaning / alt-side parking schedule.
+
+Streets (names are in canonical UPPERCASE with full words — "AVENUE" not "AVE"):
 ${streetNames.map((s,i) => `${i+1}. ${s}`).join("\n")}
-Return ONLY a JSON object. Key = street name in CAPS, value = array of schedules (empty array if unknown).
-{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],"BERRY STREET":[]}
-Return ONLY the JSON object:`, 2000);
+
+Return ONLY a raw JSON object (no prose, no markdown fences). Use the EXACT street name from the numbered list above as each key, in UPPERCASE. Value = array of schedules. Use an empty array [] only if the street truly has no alt-side rules (e.g. highways, private roads). Most residential NYC streets DO have alt-side cleaning — include what you know.
+
+Days must be 3-letter abbreviations: Mon Tue Wed Thu Fri Sat Sun.
+
+Example:
+{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],"BERRY STREET":[{"days":["Tue","Fri"],"time":"11:30 AM - 1 PM"}],"BROOKLYN QUEENS EXPRESSWAY":[]}
+
+Return ONLY the JSON object:`, 3000);
 
     let schedules = {};
-    try { const m = schedulesRaw.match(/\{[\s\S]*\}/); if (m) schedules = JSON.parse(m[0]); } catch(e) {}
+    try {
+      const m = schedulesRaw.match(/\{[\s\S]*\}/);
+      if (m) schedules = JSON.parse(m[0]);
+      else console.error("Heatmap: no JSON in Claude response:", schedulesRaw.substring(0, 300));
+    } catch(e) {
+      console.error("Heatmap: JSON parse failed:", e.message, "- raw:", schedulesRaw.substring(0, 300));
+    }
+
+    // Normalize Claude's keys so lookup is robust to case/abbreviation drift.
+    const schedulesByKey = {};
+    for (const [k, v] of Object.entries(schedules)) {
+      if (Array.isArray(v)) schedulesByKey[normStreet(k)] = v;
+    }
+    const matched = Object.keys(schedulesByKey).filter(k => schedulesByKey[k].length > 0).length;
+    console.log(`Heatmap: Claude returned ${Object.keys(schedules).length} keys, ${matched} with schedules`);
 
     const today    = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date().getDay()];
     const tomorrow = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+86400000).getDay()];
@@ -754,8 +802,8 @@ Return ONLY the JSON object:`, 2000);
     const in3days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+259200000).getDay()];
 
     const result = ways.map(w => {
-      const name = w.tags.name.toUpperCase();
-      const sch = schedules[name] || [];
+      const name = normStreet(w.tags.name);
+      const sch = schedulesByKey[name] || [];
       const coords = w.geometry.map(p => [p.lat, p.lon]);
       let urgency = sch.length ? "green" : "gray";
       let nextClean = null;

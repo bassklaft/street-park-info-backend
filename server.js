@@ -632,7 +632,7 @@ async function fetchOverpass(query) {
   return null;
 }
 
-// ─── PARKING HEAT MAP — real street geometries from OpenStreetMap ─────────────
+// ─── PARKING HEAT MAP — Google Roads API for street geometries ───────────────
 app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
@@ -641,11 +641,9 @@ app.get("/api/heatmap", async (req, res) => {
 
   // 1. In-memory cache
   const cached = heatmapCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) {
-    return res.json(cached.data);
-  }
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
 
-  // 2. DB cache — persist across restarts
+  // 2. DB cache
   try {
     const { rows } = await db.query("SELECT data FROM heatmap_cache WHERE cache_key=$1 AND updated_at > NOW() - INTERVAL '24 hours'", [cacheKey]);
     if (rows.length > 0) {
@@ -653,30 +651,61 @@ app.get("/api/heatmap", async (req, res) => {
       heatmapCache.set(cacheKey, { data, ts: Date.now() });
       return res.json(data);
     }
-  } catch(e) { console.error("DB cache read error:", e.message); }
+  } catch(e) { console.error("DB cache read:", e.message); }
 
   try {
-    const overpassQuery = `[out:json][timeout:20];way(around:500,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street)$"]["name"];out geom;`;
-    const data = await fetchOverpass(overpassQuery);
+    const GOOGLE_KEY = process.env.GOOGLE_MAPS_KEY;
 
-    if (!data) { console.error("All Overpass endpoints failed"); return res.json([]); }
+    // Generate a grid of points around the user to snap to roads
+    const points = [];
+    const step = 0.002; // ~200m
+    for (let dlat = -0.004; dlat <= 0.004; dlat += step) {
+      for (let dlng = -0.004; dlng <= 0.004; dlng += step) {
+        points.push(`${(parseFloat(lat)+dlat).toFixed(6)},${(parseFloat(lng)+dlng).toFixed(6)}`);
+      }
+    }
 
-    const ways = (data.elements || []).filter(w => w.tags?.name && w.geometry?.length > 1);
-    console.log(`Heatmap: ${ways.length} ways found near ${lat},${lng}`);
+    // Google Roads snapToRoads — snaps points to nearest roads
+    const chunks = [];
+    for (let i = 0; i < points.length; i += 100) chunks.push(points.slice(i, i+100));
 
-    // Step 2: Get unique street names
-    const streetNames = [...new Set(ways.map(w => w.tags.name.toUpperCase()))].slice(0, 20);
-    if (!streetNames.length) return res.json([]);
+    const roadSegments = new Map();
+    await Promise.all(chunks.map(async chunk => {
+      try {
+        const url = `https://roads.googleapis.com/v1/snapToRoads?path=${chunk.join("|")}&interpolate=true&key=${GOOGLE_KEY}`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const d = await r.json();
+        (d.snappedPoints || []).forEach(p => {
+          const name = p.placeId;
+          if (!roadSegments.has(name)) roadSegments.set(name, { placeId: p.placeId, coords: [] });
+          roadSegments.get(name).coords.push([p.location.latitude, p.location.longitude]);
+        });
+      } catch(e) {}
+    }));
 
-    // Step 3: One Claude call for all schedules
-    const schedulesRaw = await askClaude(`NYC alternate side parking schedules near lat=${lat}, lng=${lng}.
+    // Get street names from place IDs
+    const streetNames = new Map();
+    await Promise.all([...roadSegments.keys()].slice(0, 30).map(async placeId => {
+      try {
+        const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name&key=${GOOGLE_KEY}`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.result?.name) streetNames.set(placeId, d.result.name.toUpperCase());
+      } catch(e) {}
+    }));
 
-Streets:
-${streetNames.map((s,i) => `${i+1}. ${s}`).join("\n")}
+    if (roadSegments.size === 0) {
+      console.error("Google Roads returned no segments");
+      return res.json([]);
+    }
 
-Return ONLY a JSON object. Key = street name in CAPS, value = array of schedules (empty array if unknown).
-{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],"BERRY STREET":[]}
-Return ONLY the JSON object:`, 2000);
+    // Get schedules for street names
+    const uniqueStreets = [...new Set([...streetNames.values()])].slice(0, 20);
+    const schedulesRaw = await askClaude(`Alternate side parking schedules near lat=${lat}, lng=${lng}.
+Streets: ${uniqueStreets.join(", ")}
+Return ONLY JSON: {"STREET NAME":[{"days":["Mon"],"time":"8 AM - 9:30 AM"}]}`, 2000);
 
     let schedules = {};
     try { const m = schedulesRaw.match(/\{[\s\S]*\}/); if (m) schedules = JSON.parse(m[0]); } catch(e) {}
@@ -686,36 +715,35 @@ Return ONLY the JSON object:`, 2000);
     const in2days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+172800000).getDay()];
     const in3days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+259200000).getDay()];
 
-    // Step 4: Merge real geometry with schedule urgency — keep ALL segments
-    const result = ways.map(w => {
-        const name = w.tags.name.toUpperCase();
-        const sch = schedules[name] || [];
-        const coords = w.geometry.map(p => [p.lat, p.lon]);
-        let urgency = sch.length ? "green" : "gray";
-        let nextClean = null;
-        for (const s of sch) {
-          const days = s.days || [];
-          if (days.includes(today))    { urgency = "red";    nextClean = `Today ${s.time||""}`.trim(); break; }
-          if (days.includes(tomorrow)) { urgency = "red";    nextClean = `Tomorrow ${s.time||""}`.trim(); break; }
-          if (days.includes(in2days) || days.includes(in3days)) {
-            if (urgency !== "red") { urgency = "yellow"; nextClean = `In 2-3 days ${s.time||""}`.trim(); }
-          }
+    const result = [...roadSegments.entries()].map(([placeId, seg]) => {
+      const name = streetNames.get(placeId) || "UNKNOWN";
+      const sch = schedules[name] || [];
+      let urgency = sch.length ? "green" : "gray";
+      let nextClean = null;
+      for (const s of sch) {
+        const days = s.days || [];
+        if (days.includes(today)) { urgency = "red"; nextClean = `Today ${s.time||""}`.trim(); break; }
+        if (days.includes(tomorrow)) { urgency = "red"; nextClean = `Tomorrow ${s.time||""}`.trim(); break; }
+        if (days.includes(in2days) || days.includes(in3days)) {
+          if (urgency !== "red") { urgency = "yellow"; nextClean = `In 2-3 days ${s.time||""}`.trim(); }
         }
-        return { street: name, coords, urgency, nextClean };
-      });
+      }
+      return { street: name, coords: seg.coords, urgency, nextClean };
+    }).filter(s => s.coords.length > 1 && s.street !== "UNKNOWN");
 
     heatmapCache.set(cacheKey, { data: result, ts: Date.now() });
-    // Save to DB cache for persistence across restarts
     try {
       await db.query(
-        `INSERT INTO heatmap_cache (cache_key, data) VALUES ($1, $2)
-         ON CONFLICT (cache_key) DO UPDATE SET data=$2, updated_at=NOW()`,
+        `INSERT INTO heatmap_cache (cache_key, data) VALUES ($1, $2) ON CONFLICT (cache_key) DO UPDATE SET data=$2, updated_at=NOW()`,
         [cacheKey, JSON.stringify(result)]
       );
-    } catch(e) { console.error("DB cache write error:", e.message); }
+    } catch(e) {}
+
+    console.log(`Heatmap: ${result.length} road segments via Google Roads`);
     res.json(result);
   } catch(e) { console.error("Heatmap error:", e.message); res.json([]); }
 });
+
 // Strategy: search by street name fragments, nearby cross streets, and borough-wide
 // NYC Open Data dataset tg4x-b46p is the official Mayor's Office of Media & Entertainment permits
 app.get("/api/films", async (req, res) => {

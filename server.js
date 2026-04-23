@@ -1180,15 +1180,47 @@ app.delete("/saved-searches/:id", authMiddleware, async (req, res) => {
 
 // ─── SUBSCRIBE ────────────────────────────────────────────────────────────────
 app.post("/subscribe", async (req, res) => {
-  const { phone, street, borough, lat, lng } = req.body;
+  const body = req.body || {};
+  const { phone, street, borough, lat, lng } = body;
   if (!phone) return res.status(400).json({ error: "phone required" });
-  const digits = phone.replace(/\D/g,"");
+
+  const digits = String(phone).replace(/\D/g,"");
+  if (digits.length < 10) return res.status(400).json({ error: "invalid phone" });
   const e164 = digits.startsWith("1") ? `+${digits}` : `+1${digits}`;
+
+  // Street is optional: unlimited-tier users may subscribe without a tracked
+  // location. Normalize to NULL (not "") so it's semantically clear and
+  // alert jobs can filter subscribers that opted in for weather/ASP only.
+  const streetNorm = street ? String(street).toUpperCase() : null;
+  const boroughNorm = borough ? String(borough) : null;
+  const latNum = lat != null && !isNaN(+lat) ? +lat : null;
+  const lngNum = lng != null && !isNaN(+lng) ? +lng : null;
+
   try {
-    await db.query(`INSERT INTO subscribers (phone,street,borough,lat,lng) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (phone) DO UPDATE SET street=$2,borough=$3,lat=$4,lng=$5,active=true`, [e164,(street||"").toUpperCase(),borough||"",lat||null,lng||null]);
-    await twilioClient.messages.create({ body:`🚗 Street Park Now: Data rates may apply. Your SMS Alert feature is now active! We'll text you before street cleaning, film shoots, and bad weather. Reply STOP to unsubscribe.`, from:process.env.TWILIO_PHONE_NUMBER, to:e164 });
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    await db.query(
+      `INSERT INTO subscribers (phone,street,borough,lat,lng) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (phone) DO UPDATE SET street=EXCLUDED.street, borough=EXCLUDED.borough, lat=EXCLUDED.lat, lng=EXCLUDED.lng, active=true`,
+      [e164, streetNorm, boroughNorm, latNum, lngNum]
+    );
+  } catch (dbErr) {
+    console.error("Subscribe DB error:", dbErr.message, { phone: e164, street: streetNorm, borough: boroughNorm });
+    return res.status(500).json({ error: `db: ${dbErr.message}` });
+  }
+
+  try {
+    await twilioClient.messages.create({
+      body: `🚗 Street Park Now: Data rates may apply. Your SMS Alert feature is now active! We'll text you before street cleaning, film shoots, and bad weather. Reply STOP to unsubscribe.`,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: e164,
+    });
+  } catch (twErr) {
+    // Subscriber row is already saved; surface the Twilio-specific failure
+    // so the frontend can distinguish it from a total failure.
+    console.error("Subscribe Twilio error:", twErr.message, { code: twErr.code, status: twErr.status, to: e164 });
+    return res.status(502).json({ error: `sms: ${twErr.message}`, code: twErr.code });
+  }
+
+  res.json({ ok: true });
 });
 
 // ─── STRIPE CHECKOUT ───────────────────────────────────────────────────────────────────
@@ -1348,6 +1380,9 @@ async function initDB() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+  // Idempotent migration: street was originally NOT NULL. Unlimited-tier
+  // subscribers may have no tracked street, so allow NULL.
+  await db.query(`ALTER TABLE subscribers ALTER COLUMN street DROP NOT NULL`).catch(() => {});
   console.log("✅ DB ready");
 }
 

@@ -454,14 +454,21 @@ app.get("/api/reverse-geocode", async (req, res) => {
     if (r.ok) {
       const data = await r.json();
       if (data.status === "OK" && data.results?.length > 0) {
-        const result = data.results[0];
-        const comps = result.address_components || [];
+        // Find first result that's in US or Canada
+        const usResult = data.results.find(result => {
+          const comps = result.address_components || [];
+          const country = comps.find(c => c.types.includes("country"))?.short_name || "";
+          return ["US", "CA"].includes(country);
+        }) || data.results[0];
+
+        const comps = usResult.address_components || [];
         const get = (type) => comps.find(c => c.types.includes(type))?.long_name || "";
         primaryStreet = get("route").toUpperCase();
         borough       = get("sublocality_level_1") || get("sublocality") || "";
         neighborhood  = get("neighborhood") || get("sublocality_level_2") || "";
         city          = get("locality") || "";
-        label         = result.formatted_address?.split(",").slice(0,2).join(",") || "";
+        label         = usResult.formatted_address?.split(",").slice(0,2).join(",") || "";
+        console.log(`Reverse geocode: ${label} (country: ${comps.find(c=>c.types.includes("country"))?.short_name})`);
       }
     }
   } catch (e) { console.error("Google reverse geocode error:", e.message); }
@@ -821,7 +828,7 @@ app.get("/api/weather", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json(null);
   try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code,wind_speed_10m,precipitation&daily=weather_code,precipitation_sum,snowfall_sum&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&forecast_days=3&timezone=America%2FNew_York`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code,wind_speed_10m,precipitation&daily=weather_code,precipitation_sum,snowfall_sum&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&forecast_days=3&timezone=auto`;
     const r = await fetch(url);
     res.json(r.ok ? await r.json() : null);
   } catch { res.json(null); }

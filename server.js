@@ -1133,12 +1133,12 @@ app.delete("/saved-searches/:id", authMiddleware, async (req, res) => {
 // ─── SUBSCRIBE ────────────────────────────────────────────────────────────────
 app.post("/subscribe", async (req, res) => {
   const { phone, street, borough, lat, lng } = req.body;
-  if (!phone || !street) return res.status(400).json({ error: "phone and street required" });
+  if (!phone) return res.status(400).json({ error: "phone required" });
   const digits = phone.replace(/\D/g,"");
   const e164 = digits.startsWith("1") ? `+${digits}` : `+1${digits}`;
   try {
-    await db.query(`INSERT INTO subscribers (phone,street,borough,lat,lng) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (phone) DO UPDATE SET street=$2,borough=$3,lat=$4,lng=$5,active=true`, [e164,street.toUpperCase(),borough||"",lat||null,lng||null]);
-    await twilioClient.messages.create({ body:`🚗 Street Park Now activated for ${street}! We'll text you before street cleaning, film shoots, and bad weather. Reply STOP to cancel.`, from:process.env.TWILIO_PHONE_NUMBER, to:e164 });
+    await db.query(`INSERT INTO subscribers (phone,street,borough,lat,lng) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (phone) DO UPDATE SET street=$2,borough=$3,lat=$4,lng=$5,active=true`, [e164,(street||"").toUpperCase(),borough||"",lat||null,lng||null]);
+    await twilioClient.messages.create({ body:`🚗 Street Park Now: Data rates may apply. Your SMS Alert feature is now active! We'll text you before street cleaning, film shoots, and bad weather. Reply STOP to unsubscribe.`, from:process.env.TWILIO_PHONE_NUMBER, to:e164 });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

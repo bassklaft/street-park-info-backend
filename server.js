@@ -2562,6 +2562,94 @@ cron.schedule("0 20 * * *", sendNightlyAlerts, { timezone: "America/New_York" })
 cron.schedule("*/14 * * * *", () => { fetch(`https://${process.env.RENDER_SERVICE_URL||`localhost:${PORT}`}/health`).catch(()=>{}); });
 app.post("/admin/trigger-alerts", async (req,res) => { if(req.body.secret!==process.env.ADMIN_SECRET) return res.status(401).json({error:"unauthorized"}); sendNightlyAlerts().catch(console.error); res.json({ok:true}); });
 
+// ─── PUBLIC RECORDS REQUESTS ─────────────────────────────────────────────────
+// Every US state has a public-records statute (California Public Records Act,
+// NY FOIL, Illinois FOIA, federal FOIA, etc.). Cities routinely publish the
+// very data we need — sign inventories, sweeping routes, permit zones,
+// citation data — but it's often buried on agency websites. This endpoint
+// uses Claude to draft a properly formatted, statutorily cited request letter
+// targeting the right agency for the city.
+app.post("/api/records-request/draft", async (req, res) => {
+  try {
+    const { city = "", state = "", dataWanted = "", userName = "", userEmail = "" } = req.body || {};
+    if (!city || !state || !dataWanted) {
+      return res.status(400).json({ error: "city, state, and dataWanted are required" });
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const prompt = `You are a US public-records-law expert and professional drafter of public records requests. A resident wants to obtain parking-related records from their local government.
+
+CITY: ${city}
+STATE: ${state}
+REQUESTER NAME: ${userName || "[Requester Name]"}
+REQUESTER EMAIL: ${userEmail || "[requester@email.com]"}
+TODAY: ${today}
+RECORDS THEY WANT: ${dataWanted}
+
+Return ONLY a JSON object (no prose, no markdown fences) with these exact keys:
+{
+  "agencyName": "<exact name of the city or state agency that holds these records — e.g. 'Los Angeles Department of Transportation', 'San Francisco Municipal Transportation Agency', 'NYC Department of Transportation', 'Chicago Department of Transportation'>",
+  "agencyEmail": "<public records / FOIA officer email if commonly known, else empty string>",
+  "agencyAddress": "<mailing address if commonly known, else empty string>",
+  "statute": "<the correct public-records statute name + code section for this state — e.g. 'California Public Records Act (Gov. Code §§ 7920.000 et seq.)', 'New York Freedom of Information Law (Public Officers Law §§ 84–90)', 'Illinois Freedom of Information Act (5 ILCS 140/)', 'Texas Public Information Act (Gov't Code ch. 552)'>",
+  "responseDeadlineDays": <integer — statutory response deadline in calendar days; e.g. CA=10, NY=5, IL=5, TX=10, FL=reasonable time>,
+  "subject": "<concise email subject line>",
+  "letter": "<complete ready-to-send letter body, formal tone, addressed to the agency, citing the statute, listing each requested record as a numbered item, requesting electronic delivery, asking for a fee waiver if applicable, invoking the statutory response deadline, signed with the requester name. Use \\n for line breaks. Do NOT include the subject line inside the letter body.>",
+  "tips": ["<1-2 short practical tips — e.g. cc the city clerk, ask for GIS shapefile format, suggested follow-up if ignored>"]
+}
+
+Be specific to the city — if the requested records are clearly held by a different agency (e.g. parking enforcement vs. street cleaning schedules), name that agency. Prefer formats: CSV, GeoJSON/Shapefile for spatial data, PDF only if native format. If the state has no response-deadline statute, set responseDeadlineDays to 0.`;
+
+    const raw = await askClaude(prompt, 1800);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("no JSON in Claude response");
+    const draft = JSON.parse(match[0]);
+    res.json(draft);
+  } catch (e) {
+    console.error("records-request/draft failed:", e.message);
+    res.status(500).json({ error: e.message || "draft failed" });
+  }
+});
+
+// Summarize an agency's response to a prior public records request. User
+// pastes the response text (email body, PDF OCR dump, etc.) and Claude
+// extracts the concrete answers, flags redactions/denials, and suggests
+// follow-ups. Returns a structured summary the user can read in 30 seconds.
+app.post("/api/records-request/summarize", async (req, res) => {
+  try {
+    const { responseText = "", originalRequest = "" } = req.body || {};
+    if (!responseText || responseText.length < 30) {
+      return res.status(400).json({ error: "responseText is required (paste the full agency response)" });
+    }
+    const trimmed = responseText.slice(0, 40000);
+    const prompt = `You are a public-records-law expert summarizing an agency's response to a FOIA / public-records request.
+
+ORIGINAL REQUEST (for context, may be empty):
+${originalRequest || "(not provided)"}
+
+AGENCY RESPONSE (verbatim):
+${trimmed}
+
+Return ONLY a JSON object (no prose, no fences) with these keys:
+{
+  "status": "<one of: 'fulfilled', 'partial', 'denied', 'pending', 'fee_required', 'clarification_needed'>",
+  "summary": "<2-3 sentence plain-English summary of what the agency said>",
+  "keyFindings": ["<bullet of each concrete fact, data file, or answer provided>"],
+  "redactionsOrExemptions": ["<any redactions, exemptions cited, or withholdings>"],
+  "feesOrCosts": "<any fees quoted or 'none mentioned'>",
+  "nextSteps": ["<1-3 concrete follow-up actions the requester should take — e.g. appeal, narrow the request, pay fee, wait for production>"],
+  "appealable": <true if response appears denied/partial and statutorily appealable, else false>
+}`;
+    const raw = await askClaude(prompt, 1500);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("no JSON in Claude response");
+    const summary = JSON.parse(match[0]);
+    res.json(summary);
+  } catch (e) {
+    console.error("records-request/summarize failed:", e.message);
+    res.status(500).json({ error: e.message || "summarize failed" });
+  }
+});
+
 // ─── DB + START ────────────────────────────────────────────────────────────────
 async function initDB() {
   await db.query(`

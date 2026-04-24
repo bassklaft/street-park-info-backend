@@ -1529,7 +1529,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v21:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v22:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -1577,7 +1577,10 @@ app.get("/api/heatmap", async (req, res) => {
     const cleaningCity = CLEANING_CITY_BBOXES.find(b =>
       +lat >= b.minLat && +lat <= b.maxLat && +lng >= b.minLng && +lng <= b.maxLng
     );
-    if (!cleaningCity) {
+    // Chicago short-circuit: Chicago has its own real-data branch below.
+    // If we're in Chicago, skip the CITY_PROFILES path so we don't accidentally
+    // return green for every Chicago street before the Chicago branch runs.
+    if (!cleaningCity && !isChicago(+lat, +lng)) {
       // City profiles: each has one or both of (a) a citywide 24h ordinance
       // driving a yellow default, and (b) a downtown metered street list
       // elevated to red inside a downtown bbox. Profiles without isStrict24h

@@ -898,12 +898,114 @@ async function fetchOverpass(query) {
   return null;
 }
 
+// ─── OTHER PARKING RESTRICTIONS (NYC — Parking Regulation Signs) ─────────────
+// Real per-sign data from NYC DOT's official Parking Regulation Locations and
+// Signs dataset (nfid-uabd). Excludes street cleaning signs (those are shown
+// in the dedicated cleaning section) and categorizes the remainder into the
+// buckets the results-page card renders: no_parking_always, no_parking_hours,
+// time_limit, loading_zone, bus_stop, tow_away, permit_only, fire_zone.
+function categorizeSign(desc) {
+  const u = (desc || "").toUpperCase();
+  if (!u) return null;
+  // Filter out street cleaning — those belong to the /api/cleaning category.
+  if (u.includes("STREET CLEANING") || u.includes("BROOM")) return null;
+  if (u.includes("NO PARKING ANYTIME") || u.includes("NO STANDING ANYTIME")) return "no_parking_always";
+  if (u.includes("FIRE ")) return "fire_zone";
+  if (u.includes("BUS STOP")) return "bus_stop";
+  if (u.includes("TOW AWAY") || u.includes("TOW-AWAY")) return "tow_away";
+  if (u.includes("LOADING") || u.includes("TRUCK")) return "loading_zone";
+  if (u.includes("AUTHORIZED") || u.includes("PERMIT")) return "permit_only";
+  // "2 HMP", "1 HR PARKING", "HOUR METERED", "HOUR PARKING"
+  if (/\b\d+\s*(HMP|HR|HOUR)\b/.test(u)) return "time_limit";
+  if (u.includes("NO PARKING") && (u.includes("AM") || u.includes("PM"))) return "no_parking_hours";
+  if (u.includes("NO STANDING") && (u.includes("AM") || u.includes("PM"))) return "no_parking_hours";
+  return null;
+}
+
+function cleanSignText(desc) {
+  // Strip noisy suffixes NYC DOT uses like "--> (SUPERSEDES SP-854CA)" and arrows.
+  return String(desc || "")
+    .replace(/\s*\(SUPERSEDES[^)]*\)\s*/gi, "")
+    .replace(/<->|-->|<--/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+app.get("/api/restrictions", async (req, res) => {
+  const { streets: streetsParam, borough } = req.query;
+  if (!streetsParam) return res.json({});
+  const streets = streetsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 30);
+  if (!streets.length) return res.json({});
+
+  // NYC-only. Outside NYC we don't have comparable structured data — return
+  // empty so the frontend gracefully hides the card rather than showing
+  // nothing or fabricating entries from sparse OSM tags.
+  if (!borough) return res.json({});
+  const bor = String(borough).toLowerCase();
+  const nycBoroughs = ["brooklyn","manhattan","queens","bronx","staten island"];
+  if (!nycBoroughs.some(b => bor.includes(b))) return res.json({});
+
+  const boroughProper = bor.includes("staten") ? "Staten Island"
+                      : bor.charAt(0).toUpperCase() + bor.slice(1);
+
+  try {
+    // One Socrata call for all requested streets via OR'd LIKE matches.
+    const namePredicates = streets
+      .map(s => `upper(on_street) LIKE '%${s.replace(/'/g, "''").toUpperCase()}%'`)
+      .join(" OR ");
+    const where = `record_type='Current' AND borough='${boroughProper}' AND (${namePredicates})`;
+    const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,side_of_street,from_street,to_street,sign_description&$limit=1500`;
+    const r = await fetch(url);
+    if (!r.ok) { console.error("nfid-uabd fetch:", r.status); return res.json({}); }
+    const rows = await r.json();
+
+    const result = {};
+    for (const s of streets) result[s] = [];
+    const seen = new Map();
+
+    for (const row of rows) {
+      const onStreet = String(row.on_street || "").toUpperCase().trim();
+      if (!onStreet) continue;
+      // Match against the requested street (normalized contains-check).
+      const match = streets.find(s => onStreet === s || onStreet.includes(s) || s.includes(onStreet));
+      if (!match) continue;
+      const type = categorizeSign(row.sign_description);
+      if (!type) continue;
+      const cleaned = cleanSignText(row.sign_description);
+      // Dedupe by (street, side, type, cleaned description) so a block with
+      // five identical "NO PARKING ANYTIME" signs shows up once.
+      const key = `${match}|${row.side_of_street || ""}|${type}|${cleaned}`;
+      if (seen.has(key)) continue;
+      seen.set(key, true);
+      result[match].push({
+        type,
+        side: row.side_of_street || "",
+        block: [row.from_street, row.to_street].filter(Boolean).join(" to "),
+        description: cleaned,
+      });
+    }
+    // Sort each street's list by urgency bucket so the worst restrictions
+    // surface first when the frontend caps a list.
+    const TYPE_RANK = {
+      tow_away: 0, fire_zone: 1, no_parking_always: 2, bus_stop: 3,
+      no_parking_hours: 4, time_limit: 5, loading_zone: 6, permit_only: 7,
+    };
+    for (const k of Object.keys(result)) {
+      result[k].sort((a, b) => (TYPE_RANK[a.type] ?? 99) - (TYPE_RANK[b.type] ?? 99));
+    }
+    res.json(result);
+  } catch (e) {
+    console.error("Restrictions error:", e.message);
+    res.json({});
+  }
+});
+
 // ─── PARKING HEAT MAP — OpenStreetMap via Overpass ───────────────────────────
 app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v5:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v6:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -1014,11 +1116,20 @@ Return ONLY the JSON object:`, 3000);
     const in2days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+172800000).getDay()];
     const in3days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+259200000).getDay()];
 
+    // Outside NYC we have no canonical fallback source for street cleaning
+    // (Claude is our only signal). Default an unclassified street to green
+    // — "we checked and no weekly rule applies" — instead of gray, which
+    // reads to users as "we don't know." NYC keeps gray because we expect
+    // comprehensive coverage there and a missing street means we failed.
+    const NYC_BBOX = { minLat: 40.49, maxLat: 40.92, minLng: -74.26, maxLng: -73.69 };
+    const inNYC = +lat >= NYC_BBOX.minLat && +lat <= NYC_BBOX.maxLat && +lng >= NYC_BBOX.minLng && +lng <= NYC_BBOX.maxLng;
+    const noDataDefault = inNYC ? "gray" : "green";
+
     const result = ways.map(w => {
       const name = normStreet(w.tags.name);
       const sch = schedulesByKey[name] || [];
       const coords = w.geometry.map(p => [p.lat, p.lon]);
-      let urgency = sch.length ? "green" : "gray";
+      let urgency = sch.length ? "green" : noDataDefault;
       let nextClean = null;
       for (const s of sch) {
         const days = s.days || [];

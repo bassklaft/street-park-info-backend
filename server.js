@@ -1033,7 +1033,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v7:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v8:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -1095,32 +1095,38 @@ app.get("/api/heatmap", async (req, res) => {
     }
 
     const todayISO = new Date().toISOString().slice(0,10);
-    const schedulesRaw = await askClaude(`You are a US urban parking expert. Today is ${todayISO}. For each street near lat=${lat}, lng=${lng}, list any weekly posted parking rule currently in effect that requires moving a car.
+    const schedulesRaw = await askClaude(`You are a US urban parking expert. Today is ${todayISO}. For each street near lat=${lat}, lng=${lng}, return every weekly posted parking rule currently in effect. Each rule gets a "kind" tag so the client can render the right urgency.
 
 Streets (names are in canonical UPPERCASE with full words — "AVENUE" not "AVE"):
 ${streetNames.map((s,i) => `${i+1}. ${s}`).join("\n")}
 
-Return ONLY a raw JSON object (no prose, no markdown fences). Use the EXACT street name from the numbered list above as each key, in UPPERCASE. Value = array of weekly schedules currently in effect.
-
-INCLUDE these regimes (all expressed as weekly days + time window):
+KIND = "cleaning" — weekly street cleaning / alternate-side requiring you to move the car:
 - NYC / Boston / DC / Philly / Baltimore alternate-side parking
-- LA / SF / Seattle / Portland / Oakland posted weekly street sweeping
-- Chicago residential street cleaning (posted signs, typically seasonal Apr 1 - Nov 30 — do NOT include if today's month is Dec, Jan, Feb, or Mar)
-- Chicago winter overnight snow routes on arterials (3 AM - 7 AM, only Dec 1 - Apr 1 — use days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], time="3 AM - 7 AM")
-- Toronto weekly cleaning (seasonal Apr - Nov, same seasonal filter as Chicago)
+- LA / SF / Seattle / Portland / Oakland posted weekly sweeping
+- Chicago residential street cleaning (Apr 1 - Nov 30 ONLY)
+- Chicago winter overnight snow routes on arterials (Dec 1 - Apr 1 ONLY, days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], time="3 AM - 7 AM")
+- Toronto weekly cleaning (Apr - Nov only)
 
-DO NOT INCLUDE:
-- Metered / pay-by-hour zones (payment-based, not schedule-based)
-- Residential permit zones with no time window (permit-only, continuous enforcement)
-- Highways, interstates, private roads → return []
-- Rules not currently in season
+KIND = "metered" — metered / pay-by-hour enforcement during posted weekly hours:
+- Downtown arterials in most US cities (Dallas: Commerce/Elm/Main/Akard Mon-Sat 7 AM - 6 PM;
+  Austin: Congress/2nd/6th similar hours; Nashville: Broadway/Commerce;
+  Denver: 16th/Colfax/Broadway; Atlanta: Peachtree downtown; etc.)
+- RPP residential permit zones with specific weekly hours
+
+KIND = "rush_hour" — time-of-day no-parking on arterials (e.g., Mon-Fri 7-9 AM / 4-6 PM):
+- Urban arterials / primary roads known for rush-hour parking bans
+
+DO NOT include: highways/interstates, private roads, zones without a defined weekly time window. Return [] for those.
 
 Days must be 3-letter abbreviations: Mon Tue Wed Thu Fri Sat Sun.
 
 Examples:
-{"BEDFORD AVENUE":[{"days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],"SOUTH MICHIGAN AVENUE":[{"days":["Tue"],"time":"9 AM - 12 PM"}],"VIRGIL AVENUE":[{"days":["Wed"],"time":"10 AM - 12 PM"}],"LAKE SHORE DRIVE":[]}
+{"BEDFORD AVENUE":[{"kind":"cleaning","days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],
+ "COMMERCE STREET":[{"kind":"metered","days":["Mon","Tue","Wed","Thu","Fri","Sat"],"time":"7 AM - 6 PM"}],
+ "MAIN STREET":[{"kind":"metered","days":["Mon","Tue","Wed","Thu","Fri","Sat"],"time":"7 AM - 6 PM"},{"kind":"rush_hour","days":["Mon","Tue","Wed","Thu","Fri"],"time":"7 AM - 9 AM"}],
+ "LAKE SHORE DRIVE":[]}
 
-Return ONLY the JSON object:`, 3000);
+Return ONLY the JSON object:`, 4000);
 
     let schedules = {};
     try {
@@ -1144,48 +1150,73 @@ Return ONLY the JSON object:`, 3000);
     const in2days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+172800000).getDay()];
     const in3days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(Date.now()+259200000).getDay()];
 
-    // Classification is honest about what we actually know:
-    //   1. Claude returned a weekly schedule → red/yellow/green by day.
-    //   2. No schedule, but OSM tags say no-parking / time-limit → red / yellow.
-    //   3. No schedule, no OSM restriction, outside NYC → green ("actively
-    //      checked two sources, nothing applies today"). Inside NYC we keep
-    //      gray because we expect comprehensive coverage and a missing entry
-    //      means we failed, not that the street is rule-free.
-    const NYC_BBOX = { minLat: 40.49, maxLat: 40.92, minLng: -74.26, maxLng: -73.69 };
-    const inNYC = +lat >= NYC_BBOX.minLat && +lat <= NYC_BBOX.maxLat && +lng >= NYC_BBOX.minLng && +lng <= NYC_BBOX.maxLng;
-
+    // Classification is honest about what we actually know. For each street:
+    //   - If Claude returned a "cleaning" rule with a matching day → red/yellow/green
+    //   - If Claude returned a non-cleaning rule (metered / permit / rush_hour)
+    //     active today → yellow ("restrictions apply, check signs/meters")
+    //   - If OSM tags flag no-parking / time-limit → red / yellow
+    //   - If nothing from any source → gray ("we don't know"), regardless of
+    //     city. Earlier iteration of this defaulted to green outside NYC,
+    //     which lied to users about cities like Dallas where no structured
+    //     data exists. Gray is the honest answer when we have no signal.
     let osmRedCount = 0, osmYellowCount = 0;
+    let meteredCount = 0;
     const result = ways.map(w => {
       const name = normStreet(w.tags.name);
       const sch = schedulesByKey[name] || [];
       const coords = w.geometry.map(p => [p.lat, p.lon]);
-      let urgency;
+      let urgency = "gray";
       let nextClean = null;
 
       if (sch.length) {
-        urgency = "green";
+        // First pass: cleaning rules (red = today/tomorrow, yellow = 2-3 days).
         for (const s of sch) {
+          if (s.kind && s.kind !== "cleaning") continue;
           const days = s.days || [];
           if (days.includes(today))    { urgency = "red";    nextClean = `Today ${s.time||""}`.trim(); break; }
           if (days.includes(tomorrow)) { urgency = "red";    nextClean = `Tomorrow ${s.time||""}`.trim(); break; }
-          if (days.includes(in2days)||days.includes(in3days)) {
+          if (days.includes(in2days) || days.includes(in3days)) {
             if (urgency !== "red") { urgency = "yellow"; nextClean = `In 2-3 days ${s.time||""}`.trim(); }
           }
         }
+        // Second pass: metered / rush_hour / permit active today. Only elevate
+        // gray -> yellow. Never overrides a red/yellow from a cleaning rule
+        // (cleaning is stronger — you actually have to move the car).
+        if (urgency === "gray") {
+          for (const s of sch) {
+            if (s.kind === "cleaning" || !s.kind) continue;
+            const days = s.days || [];
+            if (days.includes(today)) {
+              urgency = "yellow";
+              const label = s.kind === "metered" ? "Metered"
+                         : s.kind === "rush_hour" ? "Rush-hour no parking"
+                         : s.kind === "permit" ? "Permit only"
+                         : s.kind;
+              nextClean = `${label} today ${s.time||""}`.trim();
+              meteredCount++;
+              break;
+            }
+          }
+        }
+        // If the street had schedules but none matched today/near, stay gray
+        // rather than falsely claiming "safe" — a schedule we couldn't bucket
+        // is a signal we might be misinterpreting, not a green light.
       } else {
         const osm = osmParkingStatus(w.tags);
         if (osm) {
           urgency = osm.urgency;
           nextClean = `OSM tag: ${osm.source}`;
           if (osm.urgency === "red") osmRedCount++; else if (osm.urgency === "yellow") osmYellowCount++;
-        } else {
-          urgency = inNYC ? "gray" : "green";
         }
+        // else: urgency stays gray — we have no data for this street.
       }
       return { street: name, coords, urgency, nextClean };
     });
     if (osmRedCount + osmYellowCount > 0) {
       console.log(`OSM tag classification: red=${osmRedCount} yellow=${osmYellowCount}`);
+    }
+    if (meteredCount > 0) {
+      console.log(`Non-cleaning restrictions (metered/rush-hour/permit): ${meteredCount}`);
     }
 
     heatmapCache.set(cacheKey, { data: result, ts: Date.now() });

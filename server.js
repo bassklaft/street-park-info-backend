@@ -733,11 +733,31 @@ app.get("/api/geocode", async (req, res) => {
       if (gr.ok) {
         const gd = await gr.json();
         if (gd.status === "OK" && gd.results?.length > 0) {
-          // Filter to US or Canada results only
-          const usResult = gd.results.find(r => {
+          // Filter to US/CA then pick the result closest to the user's GPS.
+          // Google's location bias is a soft signal — it ranks but doesn't
+          // guarantee the closest match. Famous streets (Tribeca Leonard)
+          // often outrank residential streets of the same name (Williamsburg
+          // Leonard) even with bias. A manual nearest-match picker using
+          // userLat/userLng solves this.
+          const usResults = gd.results.filter(r => {
             const c = r.address_components?.find(c => c.types.includes("country"))?.short_name;
             return ["US", "CA"].includes(c);
           });
+          let usResult = null;
+          if (usResults.length === 0) {
+            // fall through
+          } else if (userLat && userLng && usResults.length > 1) {
+            const uLat = +userLat, uLng = +userLng;
+            usResult = usResults.slice().sort((a, b) => {
+              const da = haversineKm(uLat, uLng, a.geometry.location.lat, a.geometry.location.lng);
+              const db = haversineKm(uLat, uLng, b.geometry.location.lat, b.geometry.location.lng);
+              return da - db;
+            })[0];
+            const dPick = haversineKm(uLat, uLng, usResult.geometry.location.lat, usResult.geometry.location.lng).toFixed(2);
+            console.log(`Geocode "${q}" — picked nearest of ${usResults.length} US/CA results (${dPick} km from user)`);
+          } else {
+            usResult = usResults[0];
+          }
           if (!usResult) {
             console.log(`Google geocode "${q}": no US/CA result, falling through`);
           } else {

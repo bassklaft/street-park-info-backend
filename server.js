@@ -1137,6 +1137,102 @@ function cleanSignText(desc) {
     .trim();
 }
 
+// Extract the weekday set encoded in a sign description. NYC sign text uses
+// compact forms like "8AM-7PM MON THRU FRI", "MON & THU", "EXCEPT SUN", etc.
+// Returns an array of 3-letter day abbreviations, or null if no days detected.
+const DAY_TOKENS = { MON:"Mon", TUE:"Tue", TUES:"Tue", WED:"Wed", THU:"Thu", THUR:"Thu", THURS:"Thu", FRI:"Fri", SAT:"Sat", SUN:"Sun" };
+const DAYS_WEEK = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function extractSignDays(desc) {
+  const u = (desc || "").toUpperCase();
+  if (!u) return null;
+  // "MON THRU FRI" / "MON-FRI" ranges
+  const rangeMatch = u.match(/\b(MON|TUE|TUES|WED|THU|THUR|THURS|FRI|SAT|SUN)\s*(?:THRU|THROUGH|TO|-|&|AND)\s*(MON|TUE|TUES|WED|THU|THUR|THURS|FRI|SAT|SUN)\b/);
+  const days = new Set();
+  if (rangeMatch) {
+    const startIdx = DAYS_WEEK.indexOf(DAY_TOKENS[rangeMatch[1]]);
+    const endIdx = DAYS_WEEK.indexOf(DAY_TOKENS[rangeMatch[2]]);
+    if (startIdx >= 0 && endIdx >= 0) {
+      // Wrap-around range (e.g., SAT-MON goes Sat, Sun, Mon)
+      let i = startIdx;
+      while (true) {
+        days.add(DAYS_WEEK[i]);
+        if (i === endIdx) break;
+        i = (i + 1) % 7;
+        if (i === startIdx) break;
+      }
+    }
+  }
+  // Individual day tokens (catch MON & THU patterns, or THU alongside a range)
+  for (const [token, abbr] of Object.entries(DAY_TOKENS)) {
+    if (new RegExp(`\\b${token}\\b`).test(u)) days.add(abbr);
+  }
+  // "EXCEPT SUN" — invert
+  const exceptMatch = u.match(/\bEXCEPT\s+(MON|TUE|TUES|WED|THU|THUR|THURS|FRI|SAT|SUN)\b/);
+  if (exceptMatch && !days.size) {
+    const excluded = DAY_TOKENS[exceptMatch[1]];
+    for (const d of DAYS_WEEK) if (d !== excluded) days.add(d);
+  }
+  return days.size ? [...days] : null;
+}
+
+// For each NYC street in the batch, look up active sign restrictions from
+// nfid-uabd and return the urgency that signs alone would suggest:
+//   "red"    — restriction covers today
+//   "yellow" — restriction covers tomorrow or the day after
+//   null     — no actionable elevation
+// Also returns a short sample of the sign text so the heatmap's nextClean
+// field can show "NO PARKING 7-9AM MON" next to the urgency color.
+async function nycSignsForHeatmap(streets, borough) {
+  if (!streets.length || !borough) return {};
+  const boroughProper = borough.toLowerCase().includes("staten") ? "Staten Island"
+                      : borough.charAt(0).toUpperCase() + borough.slice(1).toLowerCase();
+  const namePredicates = streets
+    .map(s => `upper(on_street) LIKE '%${String(s).replace(/'/g,"''").toUpperCase()}%'`)
+    .join(" OR ");
+  const where = `record_type='Current' AND borough='${boroughProper}' AND (${namePredicates})`;
+  const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,sign_description&$limit=1500`;
+  let rows = [];
+  try {
+    const r = await fetch(url);
+    if (!r.ok) { console.error("nfid-uabd heatmap fetch:", r.status); return {}; }
+    rows = await r.json();
+  } catch (e) { console.error("nfid-uabd heatmap fetch error:", e.message); return {}; }
+
+  const todayAbbr    = DAYS_WEEK[new Date().getDay()];
+  const tomorrowAbbr = DAYS_WEEK[new Date(Date.now()+86400000).getDay()];
+  const in2Abbr      = DAYS_WEEK[new Date(Date.now()+86400000*2).getDay()];
+  const in3Abbr      = DAYS_WEEK[new Date(Date.now()+86400000*3).getDay()];
+
+  const result = {}; // { street: { urgency, sample } }
+  for (const row of rows) {
+    const onStreet = String(row.on_street || "").toUpperCase().trim();
+    if (!onStreet) continue;
+    const match = streets.find(s => onStreet === s || onStreet.includes(s) || s.includes(onStreet));
+    if (!match) continue;
+    const type = categorizeSign(row.sign_description);
+    if (!type) continue;
+    // "Anytime" restrictions are always active → red.
+    if (type === "no_parking_always" || type === "fire_zone" || type === "tow_away") {
+      if (!result[match] || result[match].urgency !== "red") {
+        result[match] = { urgency: "red", sample: cleanSignText(row.sign_description).slice(0,60) };
+      }
+      continue;
+    }
+    // Day-based: red if today is listed, yellow if tomorrow or 2-3 days.
+    const days = extractSignDays(row.sign_description);
+    if (!days || !days.length) continue;
+    let up = null;
+    if (days.includes(todayAbbr)) up = "red";
+    else if (days.includes(tomorrowAbbr) || days.includes(in2Abbr) || days.includes(in3Abbr)) up = "yellow";
+    if (!up) continue;
+    const cur = result[match];
+    if (!cur || (cur.urgency === "yellow" && up === "red")) {
+      result[match] = { urgency: up, sample: cleanSignText(row.sign_description).slice(0,60) };
+    }
+  }
+  return result;
+}
+
 app.get("/api/restrictions", async (req, res) => {
   const { streets: streetsParam, borough } = req.query;
   if (!streetsParam) return res.json({});
@@ -1265,7 +1361,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v11:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v12:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -1473,6 +1569,45 @@ Return ONLY the JSON object:`, 4000);
     }
     if (meteredCount > 0) {
       console.log(`Non-cleaning restrictions (metered/rush-hour/permit): ${meteredCount}`);
+    }
+
+    // NYC-only post-pass: consult nfid-uabd signs and elevate per-street
+    // urgency when a sign's day set matches today (red) or the next 3 days
+    // (yellow). Red for signs never overrides a cleaning-red; yellow only
+    // elevates from green/gray. Sign-derived nextClean carries the actual
+    // posted text so users can see why the color changed.
+    const NYC_BOROUGH_CENTROIDS = {
+      "Manhattan":    [40.7831, -73.9712],
+      "Brooklyn":     [40.6782, -73.9442],
+      "Queens":       [40.7282, -73.7949],
+      "Bronx":        [40.8448, -73.8648],
+      "Staten Island":[40.5795, -74.1502],
+    };
+    let nycBorough = null, bestDist = Infinity;
+    for (const [name, [blat, blng]] of Object.entries(NYC_BOROUGH_CENTROIDS)) {
+      const dist = haversineKm(+lat, +lng, blat, blng);
+      if (dist < bestDist) { bestDist = dist; nycBorough = name; }
+    }
+    if (nycBorough && bestDist < 30) {
+      try {
+        const signUrgency = await nycSignsForHeatmap(streetNames, nycBorough);
+        let signElevated = 0;
+        for (const r of result) {
+          const s = signUrgency[r.street];
+          if (!s) continue;
+          const before = r.urgency;
+          if (s.urgency === "red" && r.urgency !== "red") {
+            r.urgency = "red";
+            r.nextClean = `Sign: ${s.sample}`;
+            signElevated++;
+          } else if (s.urgency === "yellow" && (r.urgency === "green" || r.urgency === "gray")) {
+            r.urgency = "yellow";
+            r.nextClean = `Sign: ${s.sample}`;
+            signElevated++;
+          }
+        }
+        if (signElevated > 0) console.log(`NYC signs elevated ${signElevated} streets (borough=${nycBorough})`);
+      } catch (e) { console.error("NYC signs elevation error:", e.message); }
     }
 
     heatmapCache.set(cacheKey, { data: result, ts: Date.now() });

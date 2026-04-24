@@ -1175,6 +1175,119 @@ function extractSignDays(desc) {
   return days.size ? [...days] : null;
 }
 
+// EPSG:2263 (NY State Plane Long Island, NAD83, US survey ft) → WGS84.
+// nfid-uabd stores sign positions as sign_x_coord / sign_y_coord in this
+// projection; converting gives us tappable dot markers for the map.
+// Verified against three known NYC points (Empire State, Hendrix St,
+// 3 Ave & E 85 St) at ~0.001° accuracy.
+function nyspToLatLng(xFt, yFt) {
+  if (xFt == null || yFt == null) return null;
+  const x = +xFt, y = +yFt;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x === 0 || y === 0) return null;
+  const a = 6378137.0, f = 1/298.257222101, e2 = 2*f - f*f, e = Math.sqrt(e2);
+  const p1 = (40 + 40/60) * Math.PI/180;
+  const p2 = (41 + 2/60)  * Math.PI/180;
+  const p0 = (40 + 10/60) * Math.PI/180;
+  const lam0 = -74 * Math.PI/180;
+  const FE_m = 300000, FN_m = 0;  // EPSG:2263 false easting is 300 km (= 984,251.97 US ft)
+  const usFoot = 1200/3937;
+  const xM = x * usFoot, yM = y * usFoot;
+  const m = p => Math.cos(p) / Math.sqrt(1 - e2*Math.sin(p)**2);
+  const t = p => Math.tan(Math.PI/4 - p/2) / Math.pow((1 - e*Math.sin(p))/(1 + e*Math.sin(p)), e/2);
+  const n = (Math.log(m(p1)) - Math.log(m(p2))) / (Math.log(t(p1)) - Math.log(t(p2)));
+  const F = m(p1) / (n * Math.pow(t(p1), n));
+  const r0 = a * F * Math.pow(t(p0), n);
+  const dx = xM - FE_m;
+  const dy = r0 - (yM - FN_m);
+  const rho = Math.sign(n) * Math.sqrt(dx*dx + dy*dy);
+  const theta = Math.atan2(dx, dy);
+  const tp = Math.pow(rho / (a * F), 1/n);
+  let phi = Math.PI/2 - 2*Math.atan(tp);
+  for (let i = 0; i < 10; i++) {
+    const sp = Math.sin(phi);
+    const np = Math.PI/2 - 2*Math.atan(tp * Math.pow((1 - e*sp)/(1 + e*sp), e/2));
+    if (Math.abs(np - phi) < 1e-11) break;
+    phi = np;
+  }
+  const lat = phi * 180/Math.PI;
+  const lng = (theta/n + lam0) * 180/Math.PI;
+  // Sanity-clamp to NYC bbox; anything outside is a bad input we don't want on the map.
+  if (lat < 40.4 || lat > 40.95 || lng < -74.3 || lng > -73.65) return null;
+  return { lat, lng };
+}
+
+// Fetch per-point restrictions (always-active signs with real coords) near a
+// lat/lng for dot-marker rendering. Only returns signs that sit within a
+// rough bbox around the user's heatmap center so we don't ship thousands of
+// markers per request. Types: hydrant (fire_zone), bus_stop, no_parking_always,
+// tow_away — the kinds of per-spot restrictions you can't see by polyline.
+async function nycPointRestrictions(lat, lng, radiusKm = 1) {
+  const lt = +lat, ln = +lng;
+  if (!Number.isFinite(lt) || !Number.isFinite(ln)) return [];
+  // Approximate degrees-per-km for bbox pre-filter (coarse but fast).
+  const latRange = radiusKm / 111;
+  const lngRange = radiusKm / (111 * Math.cos(lt * Math.PI / 180));
+  const minLat = lt - latRange, maxLat = lt + latRange;
+  const minLng = ln - lngRange, maxLng = ln + lngRange;
+
+  // nfid-uabd indexes by borough text, not coords, so we figure out the
+  // borough from the search center and query that subset — much smaller.
+  const NYC_BOROUGH_CENTROIDS = {
+    "Manhattan":    [40.7831, -73.9712],
+    "Brooklyn":     [40.6782, -73.9442],
+    "Queens":       [40.7282, -73.7949],
+    "Bronx":        [40.8448, -73.8648],
+    "Staten Island":[40.5795, -74.1502],
+  };
+  let borough = null, bestDist = Infinity;
+  for (const [name, [blat, blng]] of Object.entries(NYC_BOROUGH_CENTROIDS)) {
+    const dist = haversineKm(lt, ln, blat, blng);
+    if (dist < bestDist) { bestDist = dist; borough = name; }
+  }
+  if (!borough || bestDist > 30) return [];
+
+  // Only the sign types worth showing as map dots — the point-specific
+  // restrictions whose spot a user couldn't otherwise see.
+  const typeFilter = "(upper(sign_description) LIKE '%NO PARKING ANYTIME%' " +
+    "OR upper(sign_description) LIKE '%NO STANDING ANYTIME%' " +
+    "OR upper(sign_description) LIKE '%BUS STOP%' " +
+    "OR upper(sign_description) LIKE '%FIRE%' " +
+    "OR upper(sign_description) LIKE '%TOW AWAY%' " +
+    "OR upper(sign_description) LIKE '%TOW-AWAY%')";
+  const where = `record_type='Current' AND borough='${borough}' AND ${typeFilter}`;
+  const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,sign_description,sign_x_coord,sign_y_coord&$limit=5000`;
+
+  let rows = [];
+  try {
+    const r = await fetch(url);
+    if (!r.ok) { console.error("point-restrictions fetch:", r.status); return []; }
+    rows = await r.json();
+  } catch (e) { console.error("point-restrictions fetch error:", e.message); return []; }
+
+  const seen = new Set();
+  const points = [];
+  for (const row of rows) {
+    const coords = nyspToLatLng(row.sign_x_coord, row.sign_y_coord);
+    if (!coords) continue;
+    if (coords.lat < minLat || coords.lat > maxLat || coords.lng < minLng || coords.lng > maxLng) continue;
+    const type = categorizeSign(row.sign_description);
+    if (!type) continue;
+    if (!["no_parking_always","fire_zone","tow_away","bus_stop"].includes(type)) continue;
+    // Dedupe nearby duplicate signs (same type within ~5m) so overlapping
+    // sign records on a single post don't produce a cluster of dots.
+    const key = `${type}|${coords.lat.toFixed(4)}|${coords.lng.toFixed(4)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    points.push({
+      lat: coords.lat,
+      lng: coords.lng,
+      type,
+      description: cleanSignText(row.sign_description).slice(0,60),
+    });
+  }
+  return points;
+}
+
 // For each NYC street in the batch, look up active sign restrictions from
 // nfid-uabd and return the urgency that signs alone would suggest:
 //   "red"    — restriction covers today
@@ -1234,6 +1347,34 @@ async function nycSignsForHeatmap(streets, borough) {
   }
   return result;
 }
+
+// Point-specific NYC sign locations as tappable dots. Separate endpoint so
+// the frontend can zoom-gate fetching (only pull when the user is zoomed in
+// past level 15). Cached in-memory per (lat.3,lng.3) for 24h since sign
+// locations rarely change.
+const _pointRestrictionsCache = new Map();
+const POINT_RESTRICTIONS_TTL = 24 * 3600 * 1000;
+app.get("/api/point-restrictions", async (req, res) => {
+  const { lat, lng } = req.query;
+  if (!lat || !lng) return res.json([]);
+  const lt = +lat, ln = +lng;
+  const NYC_BBOX = { minLat:40.49, maxLat:40.92, minLng:-74.26, maxLng:-73.69 };
+  if (lt < NYC_BBOX.minLat || lt > NYC_BBOX.maxLat || ln < NYC_BBOX.minLng || ln > NYC_BBOX.maxLng) {
+    return res.json([]);
+  }
+  const key = `${lt.toFixed(3)},${ln.toFixed(3)}`;
+  const cached = _pointRestrictionsCache.get(key);
+  if (cached && Date.now() - cached.ts < POINT_RESTRICTIONS_TTL) return res.json(cached.data);
+  try {
+    const points = await nycPointRestrictions(lt, ln, 1);
+    _pointRestrictionsCache.set(key, { data: points, ts: Date.now() });
+    console.log(`Point restrictions: ${points.length} dots at ${key}`);
+    res.json(points);
+  } catch (e) {
+    console.error("Point restrictions error:", e.message);
+    res.json([]);
+  }
+});
 
 app.get("/api/restrictions", async (req, res) => {
   const { streets: streetsParam, borough } = req.query;

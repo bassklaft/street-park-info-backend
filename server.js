@@ -1517,7 +1517,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v18:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v19:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -1664,15 +1664,22 @@ app.get("/api/heatmap", async (req, res) => {
         +lat >= c.bbox.minLat && +lat <= c.bbox.maxLat &&
         +lng >= c.bbox.minLng && +lng <= c.bbox.maxLng
       );
-      let meteredCount = 0;
+      let meteredCount = 0, osmRed = 0, osmYellow = 0;
       const result = ways.map(w => {
         const name = normStreet(w.tags.name);
         const coords = w.geometry.map(p => [p.lat, p.lon]);
         if (!profile) {
+          // Outside any city profile — consult OSM tags (sparse but real
+          // when present) before falling back to green.
+          const osm = osmParkingStatus(w.tags);
+          if (osm) {
+            if (osm.urgency === "red") osmRed++; else osmYellow++;
+            return { street: name, coords, urgency: osm.urgency, nextClean: `OSM: ${osm.source}` };
+          }
           return { street: name, coords, urgency: "green", nextClean: null };
         }
-        // Downtown metered check is the same for both strict-24h and
-        // metered-only cities. Red iff in downtown bbox + name on allowlist.
+        // In a city profile. Downtown metered allowlist first (strongest
+        // signal we have from city parking authority references).
         const mid = w.geometry[Math.floor(w.geometry.length / 2)];
         const inMeteredBox = mid.lat >= profile.meteredBbox.minLat && mid.lat <= profile.meteredBbox.maxLat &&
                              mid.lon >= profile.meteredBbox.minLng && mid.lon <= profile.meteredBbox.maxLng;
@@ -1680,8 +1687,17 @@ app.get("/api/heatmap", async (req, res) => {
           meteredCount++;
           return { street: name, coords, urgency: "red", nextClean: profile.meteredText };
         }
-        // Default: yellow for strict-24h cities (citywide ordinance),
-        // green for metered-only cities (no citywide restriction).
+        // OSM tag elevation — real per-way data, sparse but accurate when
+        // present. Nashville has ~12 ways with parking:condition=ticket +
+        // maxstay=2h around downtown; Austin has parking:lane:right=no_parking
+        // corridors; Denver has occasional no_stopping tags. Each overrides
+        // the profile's default.
+        const osm = osmParkingStatus(w.tags);
+        if (osm) {
+          if (osm.urgency === "red") osmRed++; else osmYellow++;
+          return { street: name, coords, urgency: osm.urgency, nextClean: `OSM: ${osm.source}` };
+        }
+        // Profile defaults: yellow for strict-24h, green for metered-only.
         if (profile.isStrict24h) {
           return { street: name, coords, urgency: "yellow", nextClean: profile.note };
         }
@@ -1697,7 +1713,7 @@ app.get("/api/heatmap", async (req, res) => {
       const label = profile
         ? `${profile.name} (${profile.isStrict24h ? "strict 24h" : "metered-only"})`
         : "outside city allowlist";
-      console.log(`Heatmap ${label}: ${result.length} streets · ${meteredCount} metered-red`);
+      console.log(`Heatmap ${label}: ${result.length} streets · ${meteredCount} metered-red · ${osmRed} OSM-red · ${osmYellow} OSM-yellow`);
       return res.json(result);
     }
 

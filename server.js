@@ -658,9 +658,22 @@ app.get("/api/geocode", async (req, res) => {
   if (!q) return res.status(400).json({ error: "q required" });
 
   const GOOGLE_KEY = process.env.GOOGLE_MAPS_KEY;
+  // Strip unit / apt / suite / floor / # before geocoding — handle both
+  // "395 Leonard St Unit 333" and the comma-prefixed "395 Leonard St, Unit 333"
+  // plus "#333" shorthand. Alternation order matters: "apartment" before
+  // "apt", "floor" before "fl" — otherwise the shorter prefix matches first.
+  const UNIT_WORD = "(?:apartment|apt|unit|suite|ste|floor|fl|rm|room)";
   const qClean = q.trim()
-    .replace(/\s*(apt|apartment|unit|suite|ste|fl|floor|#)\s*[\w-]+/gi, "")
+    .replace(new RegExp(`,\\s*${UNIT_WORD}\\b\\.?\\s*[\\w-]+`, "gi"), "")
+    .replace(/,\s*#\s*[\w-]+/g, "")
+    .replace(new RegExp(`\\b${UNIT_WORD}\\b\\.?\\s*[\\w-]+`, "gi"), "")
+    .replace(/#\s*[\w-]+/g, "")
     .replace(/\(.*?\)/g, "")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,/g, ",")
+    .replace(/^[,\s]+/, "")
+    .replace(/,\s*$/, "")
+    .replace(/\s{2,}/g, " ")
     .trim();
 
   // ── STEP 0: Catalog check FIRST — instant, no API calls needed ───────────

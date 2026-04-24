@@ -675,7 +675,7 @@ app.get("/api/geocode", async (req, res) => {
   // plus "#333" shorthand. Alternation order matters: "apartment" before
   // "apt", "floor" before "fl" — otherwise the shorter prefix matches first.
   const UNIT_WORD = "(?:apartment|apt|unit|suite|ste|floor|fl|rm|room)";
-  const qClean = q.trim()
+  let qClean = q.trim()
     .replace(new RegExp(`,\\s*${UNIT_WORD}\\b\\.?\\s*[\\w-]+`, "gi"), "")
     .replace(/,\s*#\s*[\w-]+/g, "")
     .replace(new RegExp(`\\b${UNIT_WORD}\\b\\.?\\s*[\\w-]+`, "gi"), "")
@@ -687,6 +687,27 @@ app.get("/api/geocode", async (req, res) => {
     .replace(/,\s*$/, "")
     .replace(/\s{2,}/g, " ")
     .trim();
+  // Expand common street-suffix abbreviations before hitting Google. The
+  // Geocoding API is literal — "395 Leonard St" matches Pensacola's "W
+  // Leonard St" but not Williamsburg's "Leonard Street"; "395 Leonard
+  // Street" correctly matches Williamsburg. Normalize so the bias path
+  // has a chance.
+  const SUFFIX_EXPAND = [
+    [/\b(st)\b\.?/gi, "Street"],
+    [/\b(ave|av)\b\.?/gi, "Avenue"],
+    [/\b(blvd)\b\.?/gi, "Boulevard"],
+    [/\b(rd)\b\.?/gi, "Road"],
+    [/\b(dr)\b\.?/gi, "Drive"],
+    [/\b(pl)\b\.?/gi, "Place"],
+    [/\b(ct)\b\.?/gi, "Court"],
+    [/\b(ln)\b\.?/gi, "Lane"],
+    [/\b(pkwy)\b\.?/gi, "Parkway"],
+    [/\b(hwy)\b\.?/gi, "Highway"],
+    [/\b(ter)\b\.?/gi, "Terrace"],
+    [/\b(plz)\b\.?/gi, "Plaza"],
+    [/\b(sq)\b\.?/gi, "Square"],
+  ];
+  for (const [re, full] of SUFFIX_EXPAND) qClean = qClean.replace(re, full);
 
   // ── STEP 0: Catalog check FIRST — instant, no API calls needed ───────────
   const catalogStreets = lookupNeighborhoodStreets(qClean);

@@ -1186,6 +1186,13 @@ const DAYS_WEEK = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 function extractSignDays(desc) {
   const u = (desc || "").toUpperCase();
   if (!u) return null;
+  // Implicit weekday phrases: "SCHOOL DAYS", "BUSINESS DAYS", "WEEKDAYS".
+  if (/\bSCHOOL DAYS\b|\bBUSINESS DAYS\b|\bWEEKDAYS?\b/.test(u)) {
+    return ["Mon","Tue","Wed","Thu","Fri"];
+  }
+  if (/\bWEEKENDS?\b/.test(u)) {
+    return ["Sat","Sun"];
+  }
   // "MON THRU FRI" / "MON-FRI" ranges
   const rangeMatch = u.match(/\b(MON|TUE|TUES|WED|THU|THUR|THURS|FRI|SAT|SUN)\s*(?:THRU|THROUGH|TO|-|&|AND)\s*(MON|TUE|TUES|WED|THU|THUR|THURS|FRI|SAT|SUN)\b/);
   const days = new Set();
@@ -1645,7 +1652,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v24:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v25:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   // Stale-while-revalidate: if we have ANY cached entry (fresh or stale),
   // serve it immediately so polylines render the moment the map opens.

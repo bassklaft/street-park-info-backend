@@ -119,6 +119,38 @@ function normStreet(s) {
     .trim();
 }
 
+// NYC DOT's nfid-uabd sign dataset stores numbered avenues/streets either
+// numerically ("8 AVENUE", "56 STREET") or spelled out ("NINTH AVENUE",
+// "FIFTY-SIXTH STREET"). OpenStreetMap names them with an ordinal suffix
+// ("8th Avenue", "W 56th Street"). Those three forms never match each other
+// with a literal string compare, so our sign lookups for major avenues
+// silently returned zero rows and classified 7th-12th Ave in Midtown as
+// "safe for 4+ days". This helper returns every plausible variant for a
+// normalized OSM street name so we can search the DOT data by all of them
+// at once.
+const ORDINAL_WORDS_1_20 = [
+  "", "FIRST","SECOND","THIRD","FOURTH","FIFTH","SIXTH","SEVENTH","EIGHTH",
+  "NINTH","TENTH","ELEVENTH","TWELFTH","THIRTEENTH","FOURTEENTH","FIFTEENTH",
+  "SIXTEENTH","SEVENTEENTH","EIGHTEENTH","NINETEENTH","TWENTIETH",
+];
+function streetAliases(name) {
+  const base = normStreet(name);
+  if (!base) return [];
+  const out = new Set([base]);
+  // Strip the ordinal suffix from any leading numeric token (first or second
+  // word, to cover both "8TH AVENUE" and "WEST 56TH STREET").
+  const stripped = base.replace(/\b(\d+)(ST|ND|RD|TH)\b/g, "$1");
+  if (stripped !== base) out.add(stripped);
+  // Spell out small ordinals (1-20) — covers every Manhattan avenue and
+  // most named-number streets in the DOT data.
+  const spelled = base.replace(/\b(\d+)(ST|ND|RD|TH)?\b/g, (m, n) => {
+    const i = parseInt(n, 10);
+    return (i >= 1 && i <= 20) ? ORDINAL_WORDS_1_20[i] : m;
+  });
+  if (spelled !== base && !/\b\d+\b/.test(spelled)) out.add(spelled);
+  return [...out];
+}
+
 // ─── CHICAGO STREET SWEEPING (real city data) ───────────────────────────────
 // Pulls the official 2026 zone polygons + per-month dates from the Chicago
 // data portal (dataset 2r7q-emq3). Each zone is a ward section; the month
@@ -1467,11 +1499,22 @@ async function nycSignsForHeatmap(streets, borough) {
   if (!streets.length || !borough) return {};
   const boroughProper = borough.toLowerCase().includes("staten") ? "Staten Island"
                       : borough.charAt(0).toUpperCase() + borough.slice(1).toLowerCase();
-  const namePredicates = streets
-    .map(s => `upper(on_street) LIKE '%${String(s).replace(/'/g,"''").toUpperCase()}%'`)
+  // Build an alias → canonical map so the LIKE search covers DOT's
+  // "8 AVENUE" / "NINTH AVENUE" variants while matching rows back to the
+  // canonical OSM name (e.g. "8TH AVENUE").
+  const aliasToCanon = new Map();
+  for (const s of streets) {
+    const canon = normStreet(s);
+    for (const alias of streetAliases(canon)) {
+      if (!aliasToCanon.has(alias)) aliasToCanon.set(alias, canon);
+    }
+  }
+  const aliasList = [...aliasToCanon.keys()];
+  const namePredicates = aliasList
+    .map(a => `upper(on_street) LIKE '%${a.replace(/'/g,"''")}%'`)
     .join(" OR ");
   const where = `record_type='Current' AND borough='${boroughProper}' AND (${namePredicates})`;
-  const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,sign_description&$limit=3000`;
+  const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,sign_description&$limit=5000`;
   let rows = [];
   try {
     const r = await fetch(url);
@@ -1491,7 +1534,15 @@ async function nycSignsForHeatmap(streets, borough) {
   for (const row of rows) {
     const onStreet = String(row.on_street || "").toUpperCase().trim();
     if (!onStreet) continue;
-    const match = streets.find(s => onStreet === s || onStreet.includes(s) || s.includes(onStreet));
+    // Match by alias: direct hit, substring either way.
+    let match = aliasToCanon.get(onStreet) || null;
+    if (!match) {
+      for (const [alias, canon] of aliasToCanon) {
+        if (onStreet === alias || onStreet.includes(alias) || alias.includes(onStreet)) {
+          match = canon; break;
+        }
+      }
+    }
     if (!match) continue;
     const type = categorizeSign(row.sign_description);
     if (!type) continue;
@@ -1611,12 +1662,21 @@ app.get("/api/restrictions", async (req, res) => {
                       : bor.charAt(0).toUpperCase() + bor.slice(1);
 
   try {
-    // One Socrata call for all requested streets via OR'd LIKE matches.
-    const namePredicates = streets
-      .map(s => `upper(on_street) LIKE '%${s.replace(/'/g, "''").toUpperCase()}%'`)
+    // Build alias map (handles "8 AVENUE" / "EIGHTH AVENUE" / "8TH AVENUE"
+    // variants between OSM and DOT sign data).
+    const aliasToCanon = new Map();
+    for (const s of streets) {
+      const canon = normStreet(s) || s;
+      for (const alias of streetAliases(canon)) {
+        if (!aliasToCanon.has(alias)) aliasToCanon.set(alias, s);
+      }
+    }
+    const aliasList = [...aliasToCanon.keys()];
+    const namePredicates = aliasList
+      .map(a => `upper(on_street) LIKE '%${a.replace(/'/g,"''")}%'`)
       .join(" OR ");
     const where = `record_type='Current' AND borough='${boroughProper}' AND (${namePredicates})`;
-    const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,side_of_street,from_street,to_street,sign_description&$limit=1500`;
+    const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,side_of_street,from_street,to_street,sign_description&$limit=2500`;
     const r = await fetch(url);
     if (!r.ok) { console.error("nfid-uabd fetch:", r.status); return res.json({}); }
     const rows = await r.json();
@@ -1628,8 +1688,15 @@ app.get("/api/restrictions", async (req, res) => {
     for (const row of rows) {
       const onStreet = String(row.on_street || "").toUpperCase().trim();
       if (!onStreet) continue;
-      // Match against the requested street (normalized contains-check).
-      const match = streets.find(s => onStreet === s || onStreet.includes(s) || s.includes(onStreet));
+      // Match against the requested street via alias table.
+      let match = aliasToCanon.get(onStreet) || null;
+      if (!match) {
+        for (const [alias, canon] of aliasToCanon) {
+          if (onStreet === alias || onStreet.includes(alias) || alias.includes(onStreet)) {
+            match = canon; break;
+          }
+        }
+      }
       if (!match) continue;
       const type = categorizeSign(row.sign_description);
       if (!type) continue;
@@ -1714,7 +1781,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v26:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v27:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   // Stale-while-revalidate: if we have ANY cached entry (fresh or stale),
   // serve it immediately so polylines render the moment the map opens.

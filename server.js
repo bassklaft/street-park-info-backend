@@ -229,6 +229,18 @@ function findChicagoZone(lat, lng, zones) {
   return null;
 }
 
+// Compute "today" in a named IANA timezone, returning a Date anchored at
+// local midnight. Critical for Chicago (America/Chicago): Render runs in
+// UTC, and once UTC rolls past midnight we'd otherwise consider Chicago's
+// current-day sweeping schedule "in the past" — streets would flip to
+// green hours before anyone in Chicago has even woken up.
+function todayInTimezone(timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone, year:"numeric", month:"2-digit", day:"2-digit",
+  }).formatToParts(new Date()).reduce((acc, p) => (acc[p.type] = p.value, acc), {});
+  return new Date(Number(parts.year), Number(parts.month)-1, Number(parts.day));
+}
+
 function chicagoUrgency(nextDate, today) {
   if (!nextDate) return "gray";
   const daysAway = Math.floor((nextDate - today) / 86400000);
@@ -988,7 +1000,7 @@ app.get("/api/cleaning-batch", async (req, res) => {
       const zones = await loadChicagoZones();
       const zone = findChicagoZone(+lat, +lng, zones);
       if (zone && zone.dates.length) {
-        const today = new Date(); today.setHours(0,0,0,0);
+        const today = todayInTimezone("America/Chicago");
         const upcoming = zone.dates.filter(d => d >= today);
         if (upcoming.length) {
           const DAY_ABBR = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -1517,7 +1529,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v20:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v21:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -1728,7 +1740,7 @@ app.get("/api/heatmap", async (req, res) => {
     if (isChicago(+lat, +lng)) {
       const zones = await loadChicagoZones();
       if (zones.length) {
-        const today = new Date(); today.setHours(0,0,0,0);
+        const today = todayInTimezone("America/Chicago");
         // Pull permit zones keyed by normalized street name in one batch.
         const permitByStreet = await chicagoPermitZones([...new Set(ways.map(w => normStreet(w.tags.name)))]);
         let permitBoosted = 0;

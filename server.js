@@ -1033,7 +1033,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v9:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v10:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   const cached = heatmapCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) return res.json(cached.data);
@@ -1095,36 +1095,40 @@ app.get("/api/heatmap", async (req, res) => {
     }
 
     const todayISO = new Date().toISOString().slice(0,10);
-    const schedulesRaw = await askClaude(`You are a US urban parking expert. Today is ${todayISO}. For each street near lat=${lat}, lng=${lng}, return every weekly posted parking rule currently in effect. Each rule gets a "kind" tag so the client can render the right urgency.
+    const schedulesRaw = await askClaude(`You are a US urban parking expert with deep knowledge of NYC alternate-side parking, LA / SF / Seattle / Portland street sweeping, Chicago snow routes, and metered downtown zones. Today is ${todayISO}. For each street near lat=${lat}, lng=${lng}, return every weekly posted parking rule currently in effect. Include what you know — most residential streets in NYC, Boston, DC, Philly, Baltimore DO have weekly alternate-side cleaning; residential streets in Chicago Apr-Nov and LA year-round DO have weekly sweeping. Do not return [] just because you are not 100% certain — best-known pattern is acceptable.
 
 Streets (names are in canonical UPPERCASE with full words — "AVENUE" not "AVE"):
 ${streetNames.map((s,i) => `${i+1}. ${s}`).join("\n")}
 
-KIND = "cleaning" — weekly street cleaning / alternate-side requiring you to move the car:
-- NYC / Boston / DC / Philly / Baltimore alternate-side parking
-- LA / SF / Seattle / Portland / Oakland posted weekly sweeping
-- Chicago residential street cleaning (Apr 1 - Nov 30 ONLY)
-- Chicago winter overnight snow routes on arterials (Dec 1 - Apr 1 ONLY, days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], time="3 AM - 7 AM")
-- Toronto weekly cleaning (Apr - Nov only)
+Each rule has a "kind" tag:
 
-KIND = "metered" — metered / pay-by-hour enforcement during posted weekly hours:
-- Downtown arterials in most US cities (Dallas: Commerce/Elm/Main/Akard Mon-Sat 7 AM - 6 PM;
-  Austin: Congress/2nd/6th similar hours; Nashville: Broadway/Commerce;
-  Denver: 16th/Colfax/Broadway; Atlanta: Peachtree downtown; etc.)
-- RPP residential permit zones with specific weekly hours
+kind="cleaning" — weekly street cleaning / alternate-side (you must move the car):
+  NYC/Boston/DC/Philly: usually Mon+Thu OR Tue+Fri, 8-9:30 AM or 11:30 AM - 1 PM
+  LA: once/week per side, 8 AM - 12 PM typical
+  SF: once/week per side, 8-10 AM or 10 AM - 12 PM
+  Chicago residential (Apr 1 - Nov 30 ONLY)
+  Chicago winter overnight snow routes (Dec 1 - Apr 1 ONLY, 3 AM - 7 AM all 7 days)
+  Toronto weekly cleaning (Apr - Nov only)
 
-KIND = "rush_hour" — time-of-day no-parking on arterials (e.g., Mon-Fri 7-9 AM / 4-6 PM):
-- Urban arterials / primary roads known for rush-hour parking bans
+kind="metered" — downtown metered / pay-by-hour enforcement during posted weekly hours:
+  Dallas: Commerce/Elm/Main/Akard downtown Mon-Sat 7 AM - 6 PM
+  Austin: Congress/2nd/6th downtown Mon-Sat 8 AM - 6 PM
+  Nashville: Broadway/Commerce downtown Mon-Sat 8 AM - 6 PM
+  Denver: 16th Mall / Colfax downtown Mon-Sat 8 AM - 10 PM
+  Atlanta: Peachtree downtown Mon-Fri 7 AM - 7 PM
+  Any recognizable commercial arterial
 
-DO NOT include: highways/interstates, private roads, zones without a defined weekly time window. Return [] for those.
+kind="rush_hour" — time-of-day no-parking on arterials (e.g., Mon-Fri 7-9 AM / 4-6 PM)
+
+DO NOT include: highways/interstates/expressways, private roads, zones without a defined weekly time window. Return [] for those.
 
 Days must be 3-letter abbreviations: Mon Tue Wed Thu Fri Sat Sun.
 
 Examples:
 {"BEDFORD AVENUE":[{"kind":"cleaning","days":["Mon","Thu"],"time":"8 AM - 9:30 AM"}],
+ "BERRY STREET":[{"kind":"cleaning","days":["Tue","Fri"],"time":"11:30 AM - 1 PM"}],
  "COMMERCE STREET":[{"kind":"metered","days":["Mon","Tue","Wed","Thu","Fri","Sat"],"time":"7 AM - 6 PM"}],
- "MAIN STREET":[{"kind":"metered","days":["Mon","Tue","Wed","Thu","Fri","Sat"],"time":"7 AM - 6 PM"},{"kind":"rush_hour","days":["Mon","Tue","Wed","Thu","Fri"],"time":"7 AM - 9 AM"}],
- "LAKE SHORE DRIVE":[]}
+ "BROOKLYN QUEENS EXPRESSWAY":[]}
 
 Return ONLY the JSON object:`, 4000);
 

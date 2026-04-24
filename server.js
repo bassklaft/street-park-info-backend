@@ -1714,7 +1714,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v25:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v26:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   // Stale-while-revalidate: if we have ANY cached entry (fresh or stale),
   // serve it immediately so polylines render the moment the map opens.
@@ -1723,8 +1723,12 @@ app.get("/api/heatmap", async (req, res) => {
   const FRESH_MS = 6 * 3600 * 1000;
   let alreadyResponded = false;
 
+  // Treat empty cache entries as "no cache" — prior bug cached [] widely
+  // and users saw an empty map for hours. Non-empty means we have real data.
+  const hasData = v => Array.isArray(v) && v.length > 0;
+
   const cached = heatmapCache.get(cacheKey);
-  if (cached) {
+  if (cached && hasData(cached.data)) {
     res.json(cached.data);
     alreadyResponded = true;
     if (Date.now() - cached.ts < FRESH_MS) return;
@@ -1734,7 +1738,7 @@ app.get("/api/heatmap", async (req, res) => {
   if (!alreadyResponded) {
     try {
       const { rows } = await db.query("SELECT data, updated_at FROM heatmap_cache WHERE cache_key=$1", [cacheKey]);
-      if (rows.length > 0) {
+      if (rows.length > 0 && hasData(rows[0].data)) {
         const data = rows[0].data;
         const ageMs = Date.now() - new Date(rows[0].updated_at).getTime();
         heatmapCache.set(cacheKey, { data, ts: Date.now() - ageMs });
@@ -2164,13 +2168,18 @@ Return ONLY the JSON object:`, 4000);
       } catch (e) { console.error("NYC signs elevation error:", e.message); }
     }
 
-    heatmapCache.set(cacheKey, { data: result, ts: Date.now() });
-    try {
-      await db.query(
-        `INSERT INTO heatmap_cache (cache_key, data) VALUES ($1, $2) ON CONFLICT (cache_key) DO UPDATE SET data=$2, updated_at=NOW()`,
-        [cacheKey, JSON.stringify(result)]
-      );
-    } catch(e) {}
+    // Only cache non-empty results. An empty heatmap is almost always a
+    // transient failure (Overpass timeout, Claude hiccup); caching it
+    // means every subsequent request serves the empty for 6+ hours.
+    if (result.length > 0) {
+      heatmapCache.set(cacheKey, { data: result, ts: Date.now() });
+      try {
+        await db.query(
+          `INSERT INTO heatmap_cache (cache_key, data) VALUES ($1, $2) ON CONFLICT (cache_key) DO UPDATE SET data=$2, updated_at=NOW()`,
+          [cacheKey, JSON.stringify(result)]
+        );
+      } catch(e) {}
+    }
 
     console.log(`Heatmap: ${result.length} streets`);
     if (!alreadyResponded) res.json(result);

@@ -1514,7 +1514,7 @@ async function nycSignsForHeatmap(streets, borough) {
     .map(a => `upper(on_street) LIKE '%${a.replace(/'/g,"''")}%'`)
     .join(" OR ");
   const where = `record_type='Current' AND borough='${boroughProper}' AND (${namePredicates})`;
-  const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,sign_description&$limit=5000`;
+  const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,sign_description&$limit=20000`;
   let rows = [];
   try {
     const r = await fetch(url);
@@ -1544,7 +1544,8 @@ async function nycSignsForHeatmap(streets, borough) {
       }
     }
     if (!match) continue;
-    const type = categorizeSign(row.sign_description);
+    const isCleaning = /STREET CLEANING|BROOM|SANITATION/i.test(row.sign_description);
+    const type = isCleaning ? "street_cleaning" : categorizeSign(row.sign_description);
     if (!type) continue;
     // Always-active point-specific signs (fire zones, bus stops, no-standing-
     // anytime at a hydrant, tow-away at a driveway cut) elevate a street to
@@ -1559,7 +1560,9 @@ async function nycSignsForHeatmap(streets, borough) {
 
     const cleaned = cleanSignText(row.sign_description);
     let up = null;
-    // Active right now (correct weekday + in time window) → red.
+    // Active right now (correct weekday + in time window) → red. This catches
+    // overnight cleaning sweeps like "TUESDAY FRIDAY MIDNIGHT-3AM" — the
+    // signs that the daytime sweep schedule would miss.
     const activeNow = isSignActiveNow(row.sign_description, now);
     if (activeNow === true) {
       up = "red";
@@ -2049,7 +2052,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v28:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v29:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   // Stale-while-revalidate: if we have ANY cached entry (fresh or stale),
   // serve it immediately so polylines render the moment the map opens.

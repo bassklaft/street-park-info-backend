@@ -2198,15 +2198,31 @@ app.get("/api/heatmap", async (req, res) => {
 
   try {
     const overpassQuery = `[out:json][timeout:25];way(around:1000,${lat},${lng})["highway"~"^(residential|secondary|tertiary|primary|unclassified|living_street)$"]["name"];out geom;`;
-    const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`, {
-      headers: { "User-Agent": "StreetParkNow/1.0 (streetparknow.vercel.app)" }
-    });
-    if (!r.ok) {
-      console.error("Overpass status:", r.status);
+    // Multi-mirror retry. Render's egress occasionally gets rate-limited
+    // by the primary overpass-api.de host, which silently produced empty
+    // heatmaps citywide. Try the primary, then kumi mirror, then POST,
+    // before giving up.
+    const overpassEndpoints = [
+      { url: `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`, opts: { headers: { "User-Agent": "StreetParkNow/1.0 (streetparknow.vercel.app)" } } },
+      { url: `https://overpass.kumi.systems/api/interpreter`, opts: { method: "POST", headers: { "User-Agent": "StreetParkNow/1.0 (streetparknow.vercel.app)", "Content-Type": "application/x-www-form-urlencoded" }, body: `data=${encodeURIComponent(overpassQuery)}` } },
+      { url: `https://overpass-api.de/api/interpreter`, opts: { method: "POST", headers: { "User-Agent": "StreetParkNow/1.0 (streetparknow.vercel.app)", "Content-Type": "application/x-www-form-urlencoded" }, body: `data=${encodeURIComponent(overpassQuery)}` } },
+      { url: `https://maps.mail.ru/osm/tools/overpass/api/interpreter?data=${encodeURIComponent(overpassQuery)}`, opts: { headers: { "User-Agent": "StreetParkNow/1.0 (streetparknow.vercel.app)" } } },
+    ];
+    let data = null, lastStatus = 0;
+    for (const ep of overpassEndpoints) {
+      try {
+        const r = await fetch(ep.url, ep.opts);
+        if (!r.ok) { lastStatus = r.status; continue; }
+        data = await r.json();
+        if (data && Array.isArray(data.elements)) break;
+        data = null;
+      } catch (e) { lastStatus = -1; continue; }
+    }
+    if (!data) {
+      console.error("Overpass all mirrors failed, lastStatus:", lastStatus);
       if (!alreadyResponded) res.json([]);
       return;
     }
-    const data = await r.json();
     const ways = (data.elements || []).filter(w => w.tags?.name && w.geometry?.length > 1);
     console.log(`Overpass: ${ways.length} ways`);
 

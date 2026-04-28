@@ -1609,14 +1609,84 @@ async function nycPointRestrictions(lat, lng, radiusKm = 1) {
   return points;
 }
 
+// Split OSM ways at intersection nodes (any node shared by ≥2 ways) so each
+// emitted polyline corresponds to a single street block, not a whole street.
+// Without this, a long avenue's polyline takes the worst-case urgency from
+// any of its blocks; per-block segments let an Mon-Thu cleaning block stay
+// yellow while the rest of the street goes green.
+//
+// Returns: [{wayId, street, tags, coords:[[lat,lng],...], startCrosses:[name],
+// endCrosses:[name]}]. startCrosses/endCrosses are the canonical names of
+// other streets meeting at the segment's start/end nodes — used by the sign
+// matcher to pick which from_street/to_street pair a sign brackets.
+function splitWaysIntoBlockSegments(ways) {
+  // Tally node IDs across all returned ways. A node appearing in ≥2 ways is a
+  // known intersection — we split there. Nodes appearing in only 1 way *might*
+  // be intersections with cross-streets that fell outside our 1km query
+  // bbox, but we can't tell, so we don't split. That under-splits at the
+  // edge of the heatmap, which is no worse than the prior whole-way behavior.
+  const nodeStreets = new Map(); // nodeId -> Set<canonical street name>
+  for (const w of ways) {
+    const street = normStreet(w.tags?.name);
+    if (!street) continue;
+    for (const nid of w.nodes || []) {
+      if (!nodeStreets.has(nid)) nodeStreets.set(nid, new Set());
+      nodeStreets.get(nid).add(street);
+    }
+  }
+  const segments = [];
+  for (const w of ways) {
+    const street = normStreet(w.tags?.name);
+    if (!street) continue;
+    const nodes = w.nodes || [];
+    const geom  = w.geometry || [];
+    if (nodes.length !== geom.length || nodes.length < 2) {
+      // Geometry/nodes mismatch (rare, from Overpass mirror oddities): emit
+      // the whole way as one segment so we don't drop streets entirely.
+      segments.push({
+        wayId: w.id, street, tags: w.tags,
+        coords: geom.map(p => [p.lat, p.lon]),
+        startCrosses: [], endCrosses: [],
+      });
+      continue;
+    }
+    let segStart = 0;
+    for (let i = 1; i < nodes.length; i++) {
+      const isIntersection = (nodeStreets.get(nodes[i])?.size || 0) > 1;
+      const isLast = i === nodes.length - 1;
+      if (!isIntersection && !isLast) continue;
+      const segCoords = geom.slice(segStart, i + 1).map(p => [p.lat, p.lon]);
+      if (segCoords.length < 2) { segStart = i; continue; }
+      const startCrosses = [...(nodeStreets.get(nodes[segStart]) || [])].filter(n => n !== street);
+      const endCrosses   = [...(nodeStreets.get(nodes[i])        || [])].filter(n => n !== street);
+      segments.push({
+        wayId: w.id, street, tags: w.tags,
+        coords: segCoords, startCrosses, endCrosses,
+      });
+      segStart = i;
+    }
+  }
+  return segments;
+}
+
+// Build the canonical key for a (street, cross-street pair) lookup. Both
+// sides of the join (OSM segment endpoints, nfid-uabd from_street/to_street)
+// must produce the same key for matching to work.
+function blockKey(crossA, crossB) {
+  const a = normStreet(crossA) || "";
+  const b = normStreet(crossB) || "";
+  if (!a && !b) return "";
+  return [a, b].sort().join("|");
+}
+
 // For each NYC street in the batch, look up active sign restrictions from
-// nfid-uabd and return the urgency that signs alone would suggest:
-//   "red"    — ANY restriction is active right now or today
-//   "yellow" — restriction covers tomorrow or the day after (next 48h)
-//   null     — no actionable elevation
-// Also returns samples[] with ALL matched signs per street so the frontend
-// can render stacked signs (cleaning + school + overnight etc.) not just
-// the first found.
+// nfid-uabd and return urgency at TWO granularities:
+//   1. street-wide fallback: signs that didn't match any specific block
+//      (typically signs whose from_street/to_street don't normalize to one
+//      of the cross-streets the OSM ways expose in our 1km bbox)
+//   2. per-block: keyed by sorted "fromCross|toCross"; each block carries
+//      its own urgency + sample text, so adjacent blocks of the same
+//      avenue can color independently.
 async function nycSignsForHeatmap(streets, borough) {
   if (!streets.length || !borough) return {};
   const boroughProper = borough.toLowerCase().includes("staten") ? "Staten Island"
@@ -1636,7 +1706,9 @@ async function nycSignsForHeatmap(streets, borough) {
     .map(a => `upper(on_street) LIKE '%${a.replace(/'/g,"''")}%'`)
     .join(" OR ");
   const where = `record_type='Current' AND borough='${boroughProper}' AND (${namePredicates})`;
-  const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,sign_description&$limit=20000`;
+  // Pull from_street + to_street so we can attribute each sign to the specific
+  // block it brackets, instead of fanning every sign across the whole street.
+  const url = `https://data.cityofnewyork.us/resource/nfid-uabd.json?$where=${encodeURIComponent(where)}&$select=on_street,from_street,to_street,sign_description&$limit=20000`;
   let rows = [];
   try {
     const r = await fetch(url);
@@ -1649,9 +1721,30 @@ async function nycSignsForHeatmap(streets, borough) {
   const tomorrowAbbr = DAYS_WEEK[new Date(now.getTime()+86400000).getDay()];
   const in2Abbr      = DAYS_WEEK[new Date(now.getTime()+86400000*2).getDay()];
 
-  // { street: { urgency, sample, samples: [{type, text, urgency}] } }
+  // result[street] = {
+  //   fallbackUrgency, fallbackSample, fallbackSamples: [...],
+  //   byBlock: { "CROSS-A|CROSS-B": { urgency, sample, samples } }
+  // }
+  // fallback applies to every block of the street (signs that don't
+  // bracket-match any known segment); byBlock lets specific blocks take
+  // their own color.
   const result = {};
   const rank = u => (u === "red" ? 2 : u === "yellow" ? 1 : 0);
+  const ensureStreet = (m) => {
+    if (!result[m]) result[m] = { fallbackUrgency: null, fallbackSample: null, fallbackSamples: [], byBlock: {} };
+    return result[m];
+  };
+  const upsertBucket = (bucket, up, cleaned, type) => {
+    if (rank(up) > rank(bucket.urgency || null)) {
+      bucket.urgency = up;
+      bucket.sample  = cleaned.slice(0,60);
+    }
+    const key = cleaned.toUpperCase();
+    if (!bucket.samples) bucket.samples = [];
+    if (!bucket.samples.some(x => x._k === key)) {
+      bucket.samples.push({ _k: key, type, text: cleaned.slice(0, 80), urgency: up });
+    }
+  };
 
   for (const row of rows) {
     const onStreet = String(row.on_street || "").toUpperCase().trim();
@@ -1697,20 +1790,35 @@ async function nycSignsForHeatmap(streets, borough) {
     }
     if (!up) continue;
 
-    if (!result[match]) result[match] = { urgency: up, sample: cleaned.slice(0,60), samples: [] };
-    if (rank(up) > rank(result[match].urgency)) {
-      result[match].urgency = up;
-      result[match].sample  = cleaned.slice(0,60);
-    }
-    // Capture stacked signs — dedupe by normalized text.
-    const key = cleaned.toUpperCase();
-    if (!result[match].samples.some(x => x._k === key)) {
-      result[match].samples.push({ _k: key, type, text: cleaned.slice(0, 80), urgency: up });
+    const street = ensureStreet(match);
+    const bk = blockKey(row.from_street, row.to_street);
+    if (bk) {
+      // Sign brackets a specific block — record per-block. This is the
+      // common case for cleaning signs and timed restrictions in NYC,
+      // where DOT records both endpoints.
+      if (!street.byBlock[bk]) street.byBlock[bk] = { urgency: null, sample: null, samples: [] };
+      upsertBucket(street.byBlock[bk], up, cleaned, type);
+    } else {
+      // Sign has no usable cross-street pair — apply street-wide as the
+      // safe fallback (matches the pre-per-block behavior).
+      // Also store as fallback so we can elevate the street's urgency when
+      // a sign has no usable bracket info.
+      if (rank(up) > rank(street.fallbackUrgency)) {
+        street.fallbackUrgency = up;
+        street.fallbackSample  = cleaned.slice(0,60);
+      }
+      const key = cleaned.toUpperCase();
+      if (!street.fallbackSamples.some(x => x._k === key)) {
+        street.fallbackSamples.push({ _k: key, type, text: cleaned.slice(0, 80), urgency: up });
+      }
     }
   }
-  // Trim internal dedup keys and cap samples per street for payload size.
+  // Trim internal dedup keys + cap sample arrays for payload size.
   for (const k of Object.keys(result)) {
-    result[k].samples = result[k].samples.slice(0, 8).map(({_k, ...rest}) => rest);
+    result[k].fallbackSamples = result[k].fallbackSamples.slice(0, 8).map(({_k, ...rest}) => rest);
+    for (const bk of Object.keys(result[k].byBlock)) {
+      result[k].byBlock[bk].samples = (result[k].byBlock[bk].samples || []).slice(0, 6).map(({_k, ...rest}) => rest);
+    }
   }
   return result;
 }
@@ -2187,7 +2295,7 @@ app.get("/api/heatmap", async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) return res.json([]);
 
-  const cacheKey = `v30:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
+  const cacheKey = `v31:${parseFloat(lat).toFixed(3)},${parseFloat(lng).toFixed(3)}`;
 
   // Stale-while-revalidate: if we have ANY cached entry (fresh or stale),
   // serve it immediately so polylines render the moment the map opens.
@@ -2660,24 +2768,57 @@ Return ONLY the JSON object:`, 4000);
     if (nycBorough && bestDist < 30) {
       try {
         const signUrgency = await nycSignsForHeatmap(streetNames, nycBorough);
-        let signElevated = 0;
-        for (const r of result) {
-          const s = signUrgency[r.street];
-          if (!s) continue;
-          if (s.urgency === "red" && r.urgency !== "red") {
-            r.urgency = "red";
-            r.nextClean = `Sign: ${s.sample}`;
-            signElevated++;
-          } else if (s.urgency === "yellow" && (r.urgency === "green" || r.urgency === "gray")) {
-            r.urgency = "yellow";
-            r.nextClean = `Sign: ${s.sample}`;
-            signElevated++;
+        // Split each NYC way into per-block segments. Each segment inherits
+        // the way's base urgency from `result` (cleaning schedule + OSM tag
+        // pass), then we elevate per-block from nfid-uabd signs whose
+        // from_street/to_street pair brackets THIS block. Signs that don't
+        // bracket any specific block (e.g., DOT records with empty from/to)
+        // fall through to fallback and apply street-wide.
+        const baseByWay = new Map();
+        for (let i = 0; i < ways.length; i++) baseByWay.set(ways[i].id, result[i]);
+        const segments = splitWaysIntoBlockSegments(ways);
+        let blockElevated = 0, fallbackElevated = 0;
+        const elevated = segments.map(seg => {
+          const base = baseByWay.get(seg.wayId) || { urgency: "green", nextClean: null };
+          let urgency = base.urgency, nextClean = base.nextClean, signs = null;
+          const sData = signUrgency[seg.street];
+          if (sData) {
+            // Try per-block first using sorted (startCross, endCross) key.
+            // Multi-way intersections expose multiple cross names per node;
+            // we attempt each combination so signs that pick a different
+            // cross name than OSM still match.
+            let block = null;
+            const startCrosses = seg.startCrosses.length ? seg.startCrosses : [""];
+            const endCrosses   = seg.endCrosses.length   ? seg.endCrosses   : [""];
+            outer: for (const sc of startCrosses) {
+              for (const ec of endCrosses) {
+                const bk = blockKey(sc, ec);
+                if (bk && sData.byBlock[bk]) { block = sData.byBlock[bk]; break outer; }
+              }
+            }
+            // Apply per-block first; only fall back to whole-street if no
+            // block matched AND the street has fallback signs.
+            const elev = block || (sData.fallbackUrgency
+              ? { urgency: sData.fallbackUrgency, sample: sData.fallbackSample, samples: sData.fallbackSamples }
+              : null);
+            if (elev) {
+              if (elev.urgency === "red" && urgency !== "red") {
+                urgency = "red"; nextClean = `Sign: ${elev.sample}`;
+                if (block) blockElevated++; else fallbackElevated++;
+              } else if (elev.urgency === "yellow" && (urgency === "green" || urgency === "gray")) {
+                urgency = "yellow"; nextClean = `Sign: ${elev.sample}`;
+                if (block) blockElevated++; else fallbackElevated++;
+              }
+              if (Array.isArray(elev.samples) && elev.samples.length) signs = elev.samples;
+            }
           }
-          // Always attach stacked sign samples so the frontend can render
-          // "cleaning + school zone + overnight no-parking" on one street.
-          if (Array.isArray(s.samples) && s.samples.length) r.signs = s.samples;
-        }
-        if (signElevated > 0) console.log(`NYC signs elevated ${signElevated} streets (borough=${nycBorough})`);
+          const out = { street: seg.street, coords: seg.coords, urgency, nextClean };
+          if (signs) out.signs = signs;
+          return out;
+        });
+        result.length = 0;
+        for (const e of elevated) result.push(e);
+        console.log(`NYC per-block: ${segments.length} segments · ${blockElevated} block-elevated · ${fallbackElevated} fallback-elevated (borough=${nycBorough})`);
       } catch (e) { console.error("NYC signs elevation error:", e.message); }
     }
 

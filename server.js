@@ -1817,11 +1817,17 @@ app.get("/api/restrictions", async (req, res) => {
       const key = `${match}|${row.side_of_street || ""}|${type}|${cleaned}`;
       if (seen.has(key)) continue;
       seen.set(key, true);
+      // activeNow: signs without parsed days/time (NO PARKING ANYTIME, fire
+      // zones, bus stops) are always-active → true. Hour/day-restricted
+      // signs run through isSignActiveNow which checks NYC local time.
+      const ann = isSignActiveNow(cleaned);
+      const activeNow = ann === null ? true : ann;
       result[match].push({
         type,
         side: row.side_of_street || "",
         block: [row.from_street, row.to_street].filter(Boolean).join(" to "),
         description: cleaned,
+        activeNow,
       });
     }
     // Sort each street's list by urgency bucket so the worst restrictions
@@ -1832,8 +1838,15 @@ app.get("/api/restrictions", async (req, res) => {
       school_zone: 6, time_limit: 7, loading_zone: 8,
       permit_only: 9, authorized_only: 10,
     };
+    // Sort: active-now rules first (so the headline = most-restrictive rule
+    // currently in effect right now), then urgency rank within each group.
     for (const k of Object.keys(result)) {
-      result[k].sort((a, b) => (TYPE_RANK[a.type] ?? 99) - (TYPE_RANK[b.type] ?? 99));
+      result[k].sort((a, b) => {
+        const aa = a.activeNow ? 0 : 1;
+        const bb = b.activeNow ? 0 : 1;
+        if (aa !== bb) return aa - bb;
+        return (TYPE_RANK[a.type] ?? 99) - (TYPE_RANK[b.type] ?? 99);
+      });
     }
     res.json(result);
   } catch (e) {

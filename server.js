@@ -1373,7 +1373,7 @@ const DAY_TOKENS = {
 };
 const DAYS_WEEK = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 function extractSignDays(desc) {
-  const u = (desc || "").toUpperCase();
+  let u = (desc || "").toUpperCase();
   if (!u) return null;
   // Implicit weekday phrases: "SCHOOL DAYS", "BUSINESS DAYS", "WEEKDAYS".
   if (/\bSCHOOL DAYS\b|\bBUSINESS DAYS\b|\bWEEKDAYS?\b/.test(u)) {
@@ -1382,8 +1382,18 @@ function extractSignDays(desc) {
   if (/\bWEEKENDS?\b/.test(u)) {
     return ["Sat","Sun"];
   }
-  // "MON THRU FRI" / "MON-FRI" / "MONDAY THROUGH FRIDAY" ranges
   const DAY_RE = "MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY|MON|TUES|TUE|WEDS|WED|THURS|THUR|THU|FRI|SAT|SUN";
+  // Strip "EXCEPT SUN(DAY)" first so the per-token loop below doesn't see the
+  // excepted day as included. Without this, "NO STANDING 7AM-6PM EXCEPT SUNDAY"
+  // would be parsed as Sunday-only because the loop sees the SUNDAY substring
+  // and adds it to the active-day set before EXCEPT can invert it.
+  let exceptedDay = null;
+  const exceptMatch = u.match(new RegExp(`\\bEXCEPT\\s+(${DAY_RE})\\b`));
+  if (exceptMatch) {
+    exceptedDay = DAY_TOKENS[exceptMatch[1]];
+    u = u.replace(exceptMatch[0], " ");
+  }
+  // "MON THRU FRI" / "MON-FRI" / "MONDAY THROUGH FRIDAY" ranges
   const rangeMatch = u.match(new RegExp(`\\b(${DAY_RE})\\s*(?:THRU|THROUGH|TO|-|&|AND)\\s*(${DAY_RE})\\b`));
   const days = new Set();
   if (rangeMatch) {
@@ -1404,11 +1414,15 @@ function extractSignDays(desc) {
   for (const [token, abbr] of Object.entries(DAY_TOKENS)) {
     if (new RegExp(`\\b${token}\\b`).test(u)) days.add(abbr);
   }
-  // "EXCEPT SUN" / "EXCEPT SUNDAY" — invert
-  const exceptMatch = u.match(new RegExp(`\\bEXCEPT\\s+(${DAY_RE})\\b`));
-  if (exceptMatch && !days.size) {
-    const excluded = DAY_TOKENS[exceptMatch[1]];
-    for (const d of DAYS_WEEK) if (d !== excluded) days.add(d);
+  // EXCEPT post-process: if no days were named ("...EXCEPT SUNDAY"), expand
+  // to all-days-but-excepted; if days WERE named ("MON-FRI EXCEPT WED"),
+  // subtract the excepted day from the set.
+  if (exceptedDay) {
+    if (!days.size) {
+      for (const d of DAYS_WEEK) if (d !== exceptedDay) days.add(d);
+    } else {
+      days.delete(exceptedDay);
+    }
   }
   return days.size ? [...days] : null;
 }
